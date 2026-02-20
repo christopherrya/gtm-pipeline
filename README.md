@@ -124,6 +124,8 @@ A React/Vite app for generating Facebook ad creatives in bulk. Includes multiple
 
 ## Configuration
 
+**Enrichment & Orchestrator** (root `.env`):
+
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `APIFY_API_KEY` | LinkedIn, Instagram, and Compass enrichment via Apify | required |
@@ -131,6 +133,13 @@ A React/Vite app for generating Facebook ad creatives in bulk. Includes multiple
 | `CRM_DRY_RUN` | Prevent real CRM writes during testing | `true` |
 | `INSTANTLY_ENABLED` | Enable outbound push to Instantly | `false` |
 | `INSTANTLY_SHADOW_MODE` | Log sends without actually pushing | `true` |
+
+**Ad Generator** (`ad-generator/.env`):
+
+| Variable | Purpose |
+|----------|---------|
+| `ANTHROPIC_API_KEY` | Claude API — powers AI ad copy generation |
+| `GOOGLE_AI_API_KEY` | Google Gemini API — powers AI image generation |
 
 ## Runbooks
 
