@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GTM Orchestrator</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>GTM Node Orchestrator</h1>
+        <p>Hybrid DAG + Event Nodes (Local)</p>
+      </div>
+      <div class="top-metrics" id="top-metrics"></div>
+      <div class="actions">
+        <button id="run-full" class="btn btn-primary">Run Full DAG</button>
+        <button id="run-dry" class="btn">Dry Run Node</button>
+        <select id="from-node"></select>
+        <button id="run-from-node" class="btn">Run From Node</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="panel left">
+        <h2 class="section-title">Node Palette</h2>
+        <ul id="palette"></ul>
+
+        <h2 class="section-title">Clay Upload</h2>
+        <input id="clay-file" type="file" accept=".csv" />
+        <button id="upload-clay" class="btn btn-primary">Upload Clay CSV</button>
+        <p id="upload-status"></p>
+
+        <h2 class="section-title">Event Tools</h2>
+        <button id="fake-instantly-event" class="btn">Send Test Instantly Event</button>
+        <button id="manual-requeue" class="btn">Manual Requeue Test IDs</button>
+      </aside>
+
+      <section class="canvas-wrap">
+        <h2 class="section-title">Pipeline Canvas</h2>
+        <div id="canvas" class="canvas"></div>
+      </section>
+
+      <aside class="panel right">
+        <h2 class="section-title">Node Inspector</h2>
+        <pre id="inspector">Select a node...</pre>
+        <h2 class="section-title">Run History</h2>
+        <ul id="runs"></ul>
+        <h2 class="section-title">System Stats</h2>
+        <div id="stats"></div>
+      </aside>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+  </html>

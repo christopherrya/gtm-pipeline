@@ -1,0 +1,30 @@
+{
+  "name": "discloser-gtm-scripts",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "GTM automation scripts for lead enrichment and cold email campaigns",
+  "scripts": {
+    "orchestrator:start": "node orchestrator/server.js",
+    "enrich": "node enrichment/enrich-leads.js",
+    "enrich:test": "node enrichment/enrich-leads.js --test",
+    "enrich:linkedin": "node enrichment/linkedin-enricher.js",
+    "enrich:instagram": "node enrichment/instagram-enricher.js",
+    "merge": "node enrichment/leads-merger.js",
+    "hooks:extract": "node enrichment/ai-hooks-generator.js",
+    "hooks:apply": "node enrichment/ai-hooks-generator.js --apply",
+    "rescore": "node enrichment/rescore-leads.js",
+    "listings:scrape": "node enrichment/brokerage-listings/listings-scraper.js",
+    "listings:scrape:test": "node enrichment/brokerage-listings/listings-scraper.js --test",
+    "listings:match": "node enrichment/brokerage-listings/listings-matcher.js",
+    "listings:score": "node enrichment/brokerage-listings/listings-scorer.js"
+  },
+  "dependencies": {
+    "apify-client": "^2.9.0",
+    "csv-parse": "^5.5.0",
+    "csv-stringify": "^6.4.0",
+    "dotenv": "^16.3.1",
+    "node-fetch": "^3.3.2",
+    "puppeteer": "^22.0.0",
+    "string-similarity": "^4.0.4"
+  }
+}

@@ -1,0 +1,20 @@
+# Environment variables (API keys)
+.env
+
+# Dependencies
+node_modules/
+
+# Data files (may contain PII)
+data/
+
+# CSV files with lead data
+*.csv
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+
+# Claude local settings
+.claude/
