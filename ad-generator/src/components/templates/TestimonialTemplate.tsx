@@ -1,4 +1,4 @@
-import type { AdFormat, AdCopy } from '@/types/ad';
+import type { AdFormat, AdCopy, ImageLayoutSide } from '@/types/ad';
 import { COLORS } from '@/lib/constants';
 import { AdLogo } from './AdLogo';
 
@@ -7,9 +7,10 @@ interface TestimonialTemplateProps {
   format: AdFormat;
   backgroundImage?: string;
   overlayOpacity?: number;
+  layoutSide?: ImageLayoutSide;
 }
 
-export const TestimonialTemplate = ({ copy, format, backgroundImage }: TestimonialTemplateProps) => {
+export const TestimonialTemplate = ({ copy, format, backgroundImage, layoutSide = 'default' }: TestimonialTemplateProps) => {
   const s = Math.min(format.width, format.height) / 1080;
   const isLandscape = format.width > format.height * 1.4;
   const isStory = format.height > format.width * 1.4;

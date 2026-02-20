@@ -7,6 +7,7 @@ export function renderTemplate(variant: AdVariant, overlayOpacity: number = 0.45
     format: variant.format,
     backgroundImage: variant.backgroundImage,
     overlayOpacity,
+    layoutSide: variant.layoutSide,
   };
 
   switch (variant.templateId) {

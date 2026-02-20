@@ -1,4 +1,4 @@
-import type { AdFormat, AdCopy } from '@/types/ad';
+import type { AdFormat, AdCopy, ImageLayoutSide } from '@/types/ad';
 import { COLORS } from '@/lib/constants';
 import { AdLogo } from './AdLogo';
 
@@ -7,22 +7,28 @@ interface CTATemplateProps {
   format: AdFormat;
   backgroundImage?: string;
   overlayOpacity?: number;
+  layoutSide?: ImageLayoutSide;
 }
 
-export const CTATemplate = ({ copy, format, backgroundImage }: CTATemplateProps) => {
+export const CTATemplate = ({ copy, format, backgroundImage, layoutSide = 'default' }: CTATemplateProps) => {
   const s = Math.min(format.width, format.height) / 1080;
   const isLandscape = format.width > format.height * 1.4;
   const isStory = format.height > format.width * 1.4;
+  const flipped = layoutSide === 'flipped';
 
   // --- Image-integrated layout: dark copy section + separate image section ---
   if (backgroundImage) {
     const imgFraction = isLandscape ? 0.50 : isStory ? 0.48 : 0.52;
+    const baseDirection = isLandscape ? 'row-reverse' : 'column';
+    const flexDir = flipped
+      ? (isLandscape ? 'row' : 'column-reverse')
+      : baseDirection;
 
     return (
       <div style={{
         width: format.width, height: format.height,
         display: 'flex',
-        flexDirection: isLandscape ? 'row-reverse' : 'column',
+        flexDirection: flexDir as any,
         fontFamily: "'Geist', sans-serif",
         overflow: 'hidden',
       }}>

@@ -1,5 +1,9 @@
 export type TemplateId = 'hero' | 'cta' | 'feature' | 'testimonial' | 'minimal' | 'stats';
 
+export type ImageMode = 'photograph' | 'product-context';
+
+export type ImageLayoutSide = 'default' | 'flipped';
+
 export interface AdFormat {
   id: string;
   label: string;
@@ -22,6 +26,8 @@ export interface AdVariant {
   copyVariantIndex: number; // which copy variant (0-based) this belongs to
   enabled: boolean;
   backgroundImage?: string; // base64 data URL from Nano Banana
+  imageIndex?: number; // which image pool index this variant uses
+  layoutSide?: ImageLayoutSide; // configurable layout direction
 }
 
 export interface TemplateConfig {
