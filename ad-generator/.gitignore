@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Skills packets (install locally via: npx skills add coreyhaines31/marketingskills --skill copy-editing)
+skills/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -2,7 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import 'dotenv/config';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(cors());
@@ -11,6 +16,14 @@ app.use(express.json());
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
+
+// Load copy-editing skills packet for the system prompt
+let copyEditingSkills = '';
+try {
+  copyEditingSkills = readFileSync(join(__dirname, '..', 'skills', 'copy-editing.md'), 'utf-8');
+} catch {
+  console.warn('skills/copy-editing.md not found — running without copy-editing guidance');
+}
 
 app.post('/api/generate-copy', async (req, res) => {
   try {
@@ -62,6 +75,7 @@ Respond with ONLY valid JSON array:
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1024,
+      ...(copyEditingSkills ? { system: `You are an expert ad copywriter. Apply these copy-editing principles to every variant you generate:\n\n${copyEditingSkills}` } : {}),
       messages: [{ role: 'user', content }],
     });
 

@@ -18,3 +18,9 @@ data/
 
 # Claude local settings
 .claude/
+
+# Skills CLI artifacts
+.agents/
+.agent/
+.cursor/
+skills/
