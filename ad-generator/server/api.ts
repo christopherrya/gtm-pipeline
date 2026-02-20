@@ -11,7 +11,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -100,9 +100,64 @@ Respond with ONLY valid JSON array:
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_AI_API_KEY || '' });
 
+// Aspect-ratio-aware composition hints
+function getCompositionHint(width: number, height: number): string {
+  const ratio = width / height;
+  if (ratio > 1.4) {
+    return `Compose for a WIDE LANDSCAPE frame (${width}x${height}). Use a horizontal composition — spread visual weight across the width. Place the main subject off-center (rule of thirds). Include expansive negative space on one side for text overlay. Think cinematic widescreen framing.`;
+  }
+  if (ratio < 0.7) {
+    return `Compose for a TALL VERTICAL/STORY frame (${width}x${height}). Use a vertical composition — stack visual elements top-to-bottom. Place the main subject in the upper or lower third, not dead center. Leave generous vertical negative space. Think mobile-first, portrait orientation.`;
+  }
+  return `Compose for a SQUARE frame (${width}x${height}). Use a centered or diagonal composition. The subject can be more centrally placed. Balance visual weight evenly. Think Instagram-style square crop.`;
+}
+
+// Build the system prompt based on image mode
+function buildImagePrompt(prompt: string, mode: string, width: number, height: number): string {
+  const compositionHint = getCompositionHint(width, height);
+
+  if (mode === 'product-context') {
+    return `You are a product photographer specializing in tech and SaaS lifestyle shots. Generate a high-quality photograph showing a real-world context where someone would use a digital product.
+
+CRITICAL RULES:
+- This is a PHOTOGRAPH only. Absolutely NO readable text, words, letters, numbers, logos, watermarks, or typography.
+- You CAN include devices (laptops, tablets, phones) as props in the scene, but any screens must show blurred/abstract UI — no readable content.
+- The image should feel like a candid lifestyle photograph, not a staged product shot.
+- Natural lighting, real environments (offices, homes, coffee shops, open houses).
+- Show human context — hands, over-the-shoulder angles, workspace setups.
+
+${compositionHint}
+
+Style: Warm, authentic, editorial lifestyle photography. Shallow depth of field on device/workspace. Premium but approachable.
+
+Subject/Context: ${prompt}`;
+  }
+
+  // Default: photograph mode
+  return `You are a professional photographer. Generate a high-quality, editorial-style photograph.
+
+CRITICAL RULES:
+- This is a PHOTOGRAPH only. Absolutely NO text, words, letters, numbers, logos, watermarks, or typography of any kind anywhere in the image.
+- No graphic design elements. No banners, buttons, overlays, or UI elements.
+- The image must look like it was taken by a professional photographer with a DSLR camera.
+- Do NOT generate anything that looks like an advertisement or marketing material.
+
+${compositionHint}
+
+Style: Clean, well-lit, natural. Shallow depth of field where appropriate. Premium editorial feel.
+
+Subject: ${prompt}`;
+}
+
 app.post('/api/generate-image', async (req, res) => {
   try {
-    const { prompt, model = 'gemini-2.5-flash-image', width = 1080, height = 1080 } = req.body;
+    const {
+      prompt,
+      model = 'gemini-2.5-flash-image',
+      width = 1080,
+      height = 1080,
+      mode = 'photograph',
+    } = req.body;
 
     if (!process.env.GOOGLE_AI_API_KEY) {
       throw new Error('GOOGLE_AI_API_KEY not configured');
@@ -116,18 +171,7 @@ app.post('/api/generate-image', async (req, res) => {
     else if (ratio < 0.7) aspectRatio = '9:16';
     else if (ratio < 0.85) aspectRatio = '3:4';
 
-    const fullPrompt = `You are a professional photographer. Generate a high-quality, editorial-style photograph.
-
-CRITICAL RULES:
-- This is a PHOTOGRAPH only. Absolutely NO text, words, letters, numbers, logos, watermarks, or typography of any kind anywhere in the image.
-- No graphic design elements. No banners, buttons, overlays, or UI elements.
-- The image must look like it was taken by a professional photographer with a DSLR camera.
-- Do NOT generate anything that looks like an advertisement or marketing material.
-
-Style: Clean, well-lit, natural. Shallow depth of field where appropriate. Premium editorial feel.
-Composition: Leave some negative space — do not center the subject too tightly.
-
-Subject: ${prompt}`;
+    const fullPrompt = buildImagePrompt(prompt, mode, width, height);
 
     const response = await genAI.models.generateContent({
       model,
@@ -159,6 +203,59 @@ Subject: ${prompt}`;
     console.error('Image generation error:', error?.message || error);
     res.status(500).json({
       error: 'Failed to generate image',
+      detail: error?.message || String(error),
+    });
+  }
+});
+
+// ---------- Image-Copy Alignment: Generate image prompts from ad copy ----------
+
+app.post('/api/generate-image-prompts', async (req, res) => {
+  try {
+    const { copyVariants, count = 1, mode = 'photograph' } = req.body;
+
+    const modeGuidance = mode === 'product-context'
+      ? `Generate prompts describing LIFESTYLE SCENES showing someone using a tech product in a real-world context.
+Focus on: hands on a laptop, tablet on a desk at an open house, an agent reviewing documents in a modern office, someone working in a bright café, over-the-shoulder view of a device screen.
+The prompts should describe the SETTING and ACTIVITY, not the product UI.`
+      : `Generate prompts describing professional PHOTOGRAPHS that would pair well with each ad's message.
+Focus on: emotions, settings, and visual metaphors that reinforce the ad copy's angle.
+Think like a creative director pairing stock photography with ad concepts.`;
+
+    const content = `You are a creative director for Facebook ads. Given these ad copy variants, generate ${count} image prompt(s) for EACH variant. The image prompts should describe photographs that visually reinforce each ad's specific message and emotional angle.
+
+${modeGuidance}
+
+RULES:
+- Each prompt should be 1-2 sentences, focused and specific
+- Describe the SCENE, not design elements
+- Never mention text, logos, typography, or UI overlays
+- Each prompt for the same variant should describe a meaningfully different visual concept
+- Prompts should be diverse — avoid repeating the same scene across different variants
+
+Ad copy variants:
+${JSON.stringify(copyVariants, null, 2)}
+
+Respond with ONLY valid JSON array of arrays (one sub-array of ${count} prompt(s) per copy variant):
+[["prompt for variant 1 image 1", "prompt for variant 1 image 2"], ["prompt for variant 2 image 1", "prompt for variant 2 image 2"]]`;
+
+    const message = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2048,
+      messages: [{ role: 'user', content }],
+    });
+
+    const responseBlock = message.content[0];
+    if (responseBlock.type !== 'text') {
+      throw new Error('Unexpected response type');
+    }
+
+    const prompts = JSON.parse(responseBlock.text);
+    res.json({ prompts });
+  } catch (error: any) {
+    console.error('Image prompt generation error:', error?.message || error);
+    res.status(500).json({
+      error: 'Failed to generate image prompts',
       detail: error?.message || String(error),
     });
   }

@@ -2,7 +2,7 @@ import { useAdGeneratorContext } from '@/context/AdGeneratorContext';
 import { AdPreview } from './AdPreview';
 
 export const VariantGrid = () => {
-  const { variants, toggleVariant, overlayOpacity } = useAdGeneratorContext();
+  const { variants, toggleVariant, toggleVariantLayout, regenerateVariantImage, overlayOpacity } = useAdGeneratorContext();
   const enabledCount = variants.filter(v => v.enabled).length;
 
   if (variants.length === 0) {
@@ -46,7 +46,14 @@ export const VariantGrid = () => {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
               {groupVariants.map(variant => (
-                <AdPreview key={variant.id} variant={variant} onToggle={toggleVariant} overlayOpacity={overlayOpacity} />
+                <AdPreview
+                  key={variant.id}
+                  variant={variant}
+                  onToggle={toggleVariant}
+                  onToggleLayout={toggleVariantLayout}
+                  onRegenerateImage={regenerateVariantImage}
+                  overlayOpacity={overlayOpacity}
+                />
               ))}
             </div>
           </div>
