@@ -16,7 +16,7 @@ Run a private, self-hosted CRM for DISCLOSER on a Mac mini, reachable from a Mac
 
 Current known endpoint:
 
-- `http://<your-suitecrm-url>`
+- Set via `SUITECRM_BASE_URL` in `.env`
 
 ## Orchestrator Integration Model
 
@@ -36,9 +36,9 @@ Behavior:
 ## Required Environment Variables (`GTM/.env`)
 
 - `CRM_PROVIDER=suitecrm`
-- `SUITECRM_BASE_URL=http://<your-suitecrm-url>`
-- `SUITECRM_USERNAME=<api user>`
-- `SUITECRM_PASSWORD=<api password>`
+- `SUITECRM_BASE_URL=<your-suitecrm-url>`
+- `SUITECRM_USERNAME=<your-crm-user>`
+- `SUITECRM_PASSWORD=<your-crm-password>`
 - `CRM_DRY_RUN=true`
 - `CRM_MAX_UPSERT_PER_RUN=500`
 

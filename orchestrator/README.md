@@ -89,7 +89,7 @@ SuiteCRM env vars:
 
 ```bash
 CRM_PROVIDER=suitecrm
-SUITECRM_BASE_URL=http://<your-suitecrm-url>
+SUITECRM_BASE_URL=<your-suitecrm-url>
 SUITECRM_USERNAME=<your-crm-user>
 SUITECRM_PASSWORD=<your-crm-password>
 CRM_DRY_RUN=true
