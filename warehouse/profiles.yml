@@ -1,0 +1,11 @@
+gtm_warehouse:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "gtm.duckdb"
+      threads: 4
+    prod:
+      type: duckdb
+      path: "gtm.duckdb"
+      threads: 8

@@ -1,0 +1,95 @@
+version: 2
+
+models:
+  # ── Facebook Ads ──────────────────────────────────────────────────
+  - name: raw_facebook_campaigns
+    description: Deduplicated campaign metadata. One row per campaign.
+    columns:
+      - name: id
+        description: Facebook campaign ID
+        tests: [unique, not_null]
+      - name: name
+        description: Campaign name
+      - name: status
+        description: Campaign status (ACTIVE, PAUSED, ARCHIVED, DELETED)
+      - name: objective
+        description: Campaign objective (CONVERSIONS, TRAFFIC, REACH, etc.)
+
+  - name: raw_facebook_ad_sets
+    description: Deduplicated ad set metadata. One row per ad set.
+    columns:
+      - name: id
+        description: Facebook ad set ID
+        tests: [unique, not_null]
+      - name: campaign_id
+        description: Parent campaign ID
+
+  - name: raw_facebook_ads
+    description: Deduplicated ad metadata. One row per ad.
+    columns:
+      - name: id
+        description: Facebook ad ID
+        tests: [unique, not_null]
+      - name: adset_id
+        description: Parent ad set ID
+      - name: campaign_id
+        description: Parent campaign ID
+
+  - name: raw_facebook_insights
+    description: Deduplicated daily ad-level insights. One row per ad per day.
+    columns:
+      - name: ad_id
+        description: Ad ID for this insight row
+      - name: date_start
+        description: Date of the insight period
+
+  # ── Google Search Console ─────────────────────────────────────────
+  - name: raw_gsc_search_analytics
+    description: Deduplicated search analytics. One row per date/query/page/device/country.
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: query
+        description: Search query string
+      - name: page
+        description: URL that appeared in search results
+      - name: clicks
+        description: Number of clicks
+      - name: impressions
+        description: Number of impressions
+
+  # ── Instantly ─────────────────────────────────────────────────────
+  - name: raw_instantly_campaigns
+    description: Deduplicated Instantly campaign metadata.
+    columns:
+      - name: campaign_id
+        description: Instantly campaign ID
+        tests: [unique, not_null]
+
+  - name: raw_instantly_campaign_analytics
+    description: Deduplicated daily campaign email metrics.
+    columns:
+      - name: campaign_id
+        description: Instantly campaign ID
+        tests: [not_null]
+      - name: date
+        description: Date of the analytics row
+
+  - name: raw_instantly_leads
+    description: Deduplicated lead-level email engagement.
+    columns:
+      - name: lead_id
+        description: Instantly lead ID
+        tests: [unique, not_null]
+      - name: email
+        description: Lead email address
+
+  # ── Pipeline Outputs ──────────────────────────────────────────────
+  - name: raw_enriched_leads
+    description: Deduplicated enriched + scored leads from the enrichment pipeline.
+
+  - name: raw_orchestrator_runs
+    description: Deduplicated orchestrator DAG run reports.
+
+  - name: raw_listings
+    description: Deduplicated brokerage listing snapshots.

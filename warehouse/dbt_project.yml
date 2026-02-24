@@ -1,0 +1,42 @@
+name: gtm_warehouse
+version: '1.0.0'
+config-version: 2
+
+profile: gtm_warehouse
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  gtm_warehouse:
+    ingress:
+      +materialized: table
+      +schema: ingress
+    raw:
+      +materialized: table
+      +schema: raw
+    staging:
+      +materialized: view
+      +schema: staging
+    analytical:
+      +materialized: table
+      +schema: analytical
+    operational:
+      +materialized: table
+      +schema: operational
+    reporting:
+      +materialized: table
+      +schema: reporting
+
+vars:
+  landing_path: "data/landing"
+  # facebook ads lookback for incremental loads
+  fb_lookback_days: 7
+  # gsc lookback for incremental loads
+  gsc_lookback_days: 3
+  # instantly lookback
+  instantly_lookback_days: 7

@@ -1,0 +1,112 @@
+version: 2
+
+models:
+  # ── Facebook Ads ──────────────────────────────────────────────────
+  - name: stg_facebook_campaigns
+    description: >
+      Cleaned campaign metadata. Budgets converted from cents to USD.
+      Status and objective normalized to uppercase.
+    columns:
+      - name: campaign_id
+        tests: [unique, not_null]
+      - name: campaign_status
+        tests:
+          - accepted_values:
+              values: ['ACTIVE', 'PAUSED', 'ARCHIVED', 'DELETED']
+
+  - name: stg_facebook_ad_sets
+    description: Cleaned ad set metadata with parsed targeting and normalized budgets.
+    columns:
+      - name: ad_set_id
+        tests: [unique, not_null]
+      - name: campaign_id
+        tests: [not_null]
+
+  - name: stg_facebook_ads
+    description: Cleaned ad metadata.
+    columns:
+      - name: ad_id
+        tests: [unique, not_null]
+      - name: ad_set_id
+        tests: [not_null]
+
+  - name: stg_facebook_insights
+    description: >
+      Daily ad-level performance metrics. Properly typed numerics.
+      Action columns flattened from nested JSON.
+    columns:
+      - name: ad_id
+        tests: [not_null]
+      - name: report_date
+        tests: [not_null]
+      - name: spend_usd
+        description: Daily spend in USD
+      - name: cpm
+        description: Cost per 1,000 impressions
+      - name: ctr
+        description: Click-through rate (0-1 scale)
+
+  # ── Google Search Console ─────────────────────────────────────────
+  - name: stg_gsc_search_analytics
+    description: >
+      Search performance data. Query lowercased, page_path extracted
+      from full URL for grouping. CTR on 0-1 scale.
+    columns:
+      - name: report_date
+        tests: [not_null]
+      - name: query
+        tests: [not_null]
+      - name: page_url
+        tests: [not_null]
+
+  # ── Instantly ─────────────────────────────────────────────────────
+  - name: stg_instantly_campaigns
+    description: Cleaned Instantly campaign metadata.
+    columns:
+      - name: campaign_id
+        tests: [unique, not_null]
+
+  - name: stg_instantly_campaign_analytics
+    description: Daily email campaign performance metrics.
+    columns:
+      - name: campaign_id
+        tests: [not_null]
+      - name: report_date
+        tests: [not_null]
+
+  - name: stg_instantly_leads
+    description: >
+      Lead-level email engagement data. Email lowercased.
+      Boolean flags for open/click/reply/bounce.
+    columns:
+      - name: lead_id
+        tests: [unique, not_null]
+      - name: email
+        tests: [not_null]
+
+  # ── Pipeline Outputs ──────────────────────────────────────────────
+  - name: stg_enriched_leads
+    description: >
+      Enriched leads with ICP scores decomposed into sub-scores.
+      Column names normalized from Clay export format.
+    columns:
+      - name: email
+        tests: [unique, not_null]
+      - name: icp_score
+        description: Composite ICP score (0-110)
+      - name: icp_tier
+        description: "Hot (90+), High (70-89), Medium (55-69), Low (<55)"
+
+  - name: stg_orchestrator_runs
+    description: DAG node execution records per pipeline run.
+    columns:
+      - name: run_id
+        tests: [not_null]
+      - name: node_id
+        tests: [not_null]
+
+  - name: stg_listings
+    description: Cleaned brokerage listings with normalized addresses.
+    columns:
+      - name: address
+        tests: [not_null]

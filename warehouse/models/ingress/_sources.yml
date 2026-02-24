@@ -1,0 +1,77 @@
+version: 2
+
+sources:
+  - name: landing
+    description: >
+      Raw files in the landing zone, written by ingestion scripts.
+      DuckDB reads these directly via read_csv_auto / read_json_auto.
+    meta:
+      layer: ingress
+      owner: data-engineering
+    tables:
+      # ── Facebook Ads ──────────────────────────────────────────────
+      - name: facebook_campaigns
+        description: Campaign metadata from Meta Marketing API
+        meta:
+          source_system: facebook_ads
+          ingestion_script: ingest/facebook_ads.py
+          refresh_frequency: daily
+
+      - name: facebook_ad_sets
+        description: Ad set metadata including targeting and budgets
+        meta:
+          source_system: facebook_ads
+
+      - name: facebook_ads
+        description: Ad-level metadata including creative references
+        meta:
+          source_system: facebook_ads
+
+      - name: facebook_insights
+        description: Daily ad-level performance metrics (impressions, clicks, spend, CPM, etc.)
+        meta:
+          source_system: facebook_ads
+
+      # ── Google Search Console ─────────────────────────────────────
+      - name: gsc_search_analytics
+        description: Search performance data (queries, pages, clicks, impressions, CTR, position)
+        meta:
+          source_system: google_search_console
+          ingestion_script: ingest/google_search_console.py
+          refresh_frequency: daily
+
+      # ── Instantly ─────────────────────────────────────────────────
+      - name: instantly_campaigns
+        description: Email campaign metadata from Instantly
+        meta:
+          source_system: instantly
+          ingestion_script: ingest/instantly.py
+          refresh_frequency: daily
+
+      - name: instantly_campaign_analytics
+        description: Per-campaign email performance metrics (sends, opens, clicks, replies, bounces)
+        meta:
+          source_system: instantly
+
+      - name: instantly_leads
+        description: Lead-level email engagement data
+        meta:
+          source_system: instantly
+
+      # ── Pipeline Outputs ──────────────────────────────────────────
+      - name: enriched_leads
+        description: Enriched + ICP-scored leads from the enrichment pipeline
+        meta:
+          source_system: pipeline
+          ingestion_script: ingest/pipeline_outputs.py
+          refresh_frequency: on_enrichment_run
+
+      - name: orchestrator_runs
+        description: Orchestrator DAG execution logs and node reports
+        meta:
+          source_system: pipeline
+
+      - name: listings
+        description: Brokerage listing snapshots
+        meta:
+          source_system: pipeline
