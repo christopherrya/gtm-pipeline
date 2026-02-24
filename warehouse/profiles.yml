@@ -3,7 +3,7 @@ gtm_warehouse:
   outputs:
     dev:
       type: duckdb
-      path: "gtm.duckdb"
+      path: "gtm_dev.duckdb"
       threads: 4
     prod:
       type: duckdb

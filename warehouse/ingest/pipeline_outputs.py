@@ -7,6 +7,8 @@ and copies them into the landing zone for dbt to pick up.
 No external API calls — just reads from the local filesystem.
 """
 
+from __future__ import annotations
+
 import csv
 import json
 import logging

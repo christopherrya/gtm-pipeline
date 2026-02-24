@@ -86,7 +86,7 @@ with_pacing as (
 
         -- day of month for pacing calc
         extract(day from report_date) as day_of_month,
-        extract(day from last_day(report_date)) as days_in_month
+        extract(day from (date_trunc('month', report_date) + interval '1 month' - interval '1 day')) as days_in_month
 
     from campaign_daily
 )

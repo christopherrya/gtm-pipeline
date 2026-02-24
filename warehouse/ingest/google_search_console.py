@@ -8,10 +8,11 @@ Requires: pip install google-auth google-api-python-client
 Env vars: GSC_CREDENTIALS_PATH, GSC_SITE_URL
 """
 
+from __future__ import annotations
+
 import csv
 import logging
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -33,6 +34,8 @@ ROW_LIMIT = 25_000  # GSC API max per request
 
 
 def _build_service():
+    if not GSC_CREDENTIALS_PATH:
+        raise RuntimeError("GSC_CREDENTIALS_PATH env var is not set")
     credentials = service_account.Credentials.from_service_account_file(
         GSC_CREDENTIALS_PATH, scopes=SCOPES,
     )
@@ -65,9 +68,9 @@ def _write_csv(rows: list[dict], filename: str):
         logger.warning(f"No rows to write for {filename}")
         return
     path = LANDING_PATH / filename
-    fieldnames = list(rows[0].keys())
+    fieldnames = list(dict.fromkeys(k for row in rows for k in row.keys()))
     with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
     logger.info(f"Wrote {len(rows)} rows → {path}")

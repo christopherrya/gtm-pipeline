@@ -7,19 +7,19 @@ setup:
 
 # ── Ingestion ──────────────────────────────────────────────────────────────
 ingest:
-	python -m ingest.run_all
+	python -m warehouse.ingest.run_all
 
 ingest-fb:
-	python -m ingest.run_all facebook_ads
+	python -m warehouse.ingest.run_all facebook_ads
 
 ingest-gsc:
-	python -m ingest.run_all gsc
+	python -m warehouse.ingest.run_all gsc
 
 ingest-instantly:
-	python -m ingest.run_all instantly
+	python -m warehouse.ingest.run_all instantly
 
 ingest-pipeline:
-	python -m ingest.run_all pipeline_outputs
+	python -m warehouse.ingest.run_all pipeline_outputs
 
 # ── dbt ────────────────────────────────────────────────────────────────────
 dbt-deps:
@@ -53,7 +53,7 @@ dbt-run-reporting:
 
 # ── MCP Server ─────────────────────────────────────────────────────────────
 mcp-serve:
-	python -m mcp.server
+	python -m warehouse.mcp.server
 
 # ── Full Pipeline ──────────────────────────────────────────────────────────
 full-refresh: ingest dbt-run-full dbt-test

@@ -8,10 +8,11 @@ Requires: pip install facebook-business
 Env vars: FB_ACCESS_TOKEN, FB_AD_ACCOUNT_ID
 """
 
+from __future__ import annotations
+
 import csv
 import logging
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
@@ -90,9 +91,10 @@ def _write_csv(rows: list[dict], filename: str):
         logger.warning(f"No rows to write for {filename}")
         return
     path = LANDING_PATH / filename
-    fieldnames = list(rows[0].keys())
+    # collect all keys across all rows (insights have varying action columns)
+    fieldnames = list(dict.fromkeys(k for row in rows for k in row.keys()))
     with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
     logger.info(f"Wrote {len(rows)} rows → {path}")

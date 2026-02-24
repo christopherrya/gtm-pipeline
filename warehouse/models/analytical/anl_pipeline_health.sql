@@ -23,8 +23,8 @@ run_level as (
         extract(epoch from max(finished_at) - min(started_at)) as run_duration_seconds,
         -- did all nodes succeed?
         count(*) filter (where node_status = 'error') = 0 as is_success,
-        -- first error message if any
-        first(error_message) filter (where error_message is not null) as first_error
+        -- earliest error message by node start time
+        min_by(error_message, started_at) filter (where error_message is not null) as first_error
     from runs
     group by run_id
 ),

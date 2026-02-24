@@ -11,12 +11,10 @@
 */
 
 with latest_day as (
-    -- get the most recent day of data per ad
+    -- get the most recent day of data per ad (single scan via QUALIFY)
     select *
     from {{ ref('anl_facebook_ad_performance') }}
-    where report_date = (
-        select max(report_date) from {{ ref('anl_facebook_ad_performance') }}
-    )
+    qualify report_date = max(report_date) over ()
 ),
 
 flagged as (
