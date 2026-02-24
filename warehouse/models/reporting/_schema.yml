@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: rpt_ad_performance_daily
+    description: >
+      Campaign-level daily ad performance for dashboards.
+      Includes blended CPM/CTR/CPC, MTD pacing, and projected monthly spend.
+    meta:
+      layer: reporting
+      grain: one row per campaign per day
+      dashboard: "Facebook Ads Performance"
+
+  - name: rpt_seo_content_health
+    description: >
+      Page-level SEO health for content strategy dashboards.
+      Combines traffic data, trends, refresh candidates, and traffic ranking.
+    meta:
+      layer: reporting
+      grain: one row per page (latest snapshot)
+      dashboard: "SEO Content Health"
+
+  - name: rpt_email_outreach_daily
+    description: >
+      Daily email outreach totals across all Instantly campaigns.
+      Includes 7d rolling and MTD aggregates.
+    meta:
+      layer: reporting
+      grain: one row per day
+      dashboard: "Email Outreach Performance"
+
+  - name: rpt_lead_funnel
+    description: >
+      Lead funnel stages with conversion rates between each stage.
+      Shows drop-off from Total → Emailed → Opened → Clicked → Replied → Interested.
+    meta:
+      layer: reporting
+      grain: one row per funnel stage
+      dashboard: "Lead Funnel"

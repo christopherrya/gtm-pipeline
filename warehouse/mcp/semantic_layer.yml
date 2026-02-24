@@ -1,0 +1,233 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GTM Warehouse Semantic Layer
+#
+# This file defines the business meaning of every table, column, metric,
+# and relationship in the warehouse. The MCP server exposes this to Claude
+# so it can write correct queries without guessing.
+# ─────────────────────────────────────────────────────────────────────────────
+
+warehouse:
+  name: GTM Warehouse
+  description: >
+    Unified data warehouse for go-to-market operations. Contains Facebook Ads
+    performance data, Google Search Console SEO metrics, Instantly email
+    campaign analytics, and enriched lead data from the GTM enrichment pipeline.
+  engine: DuckDB
+  refresh: Daily ingestion + dbt run
+
+# ── Data Sources ────────────────────────────────────────────────────────────
+
+sources:
+  facebook_ads:
+    description: Facebook/Meta Marketing API — campaign, ad set, ad, and insights data
+    api: Meta Marketing API v21
+    refresh: Daily, 30-day lookback
+    notes: Budgets stored in cents by Meta, converted to USD in staging layer
+
+  google_search_console:
+    description: Google Search Console API — search query performance by page
+    api: Google Search Console API v1
+    refresh: Daily, 30-day lookback (data lags ~3 days)
+    notes: Position is average ranking position (1 = top). CTR is 0-1 scale.
+
+  instantly:
+    description: Instantly email outreach platform — campaign and lead engagement
+    api: Instantly API v2
+    refresh: Daily
+    notes: Lead-level engagement (opens, clicks, replies, bounces)
+
+  pipeline:
+    description: Local GTM enrichment pipeline — enriched leads, ICP scores, listings
+    refresh: On enrichment run (typically monthly)
+    notes: ICP scoring uses a 110-point model across Clay, LinkedIn, Instagram, transaction, and recency signals
+
+# ── Layer Descriptions ──────────────────────────────────────────────────────
+
+layers:
+  ingress:
+    description: Raw copy of landing zone files. No transformations. One-to-one with API responses.
+    materialization: table
+    query_recommendation: Avoid querying directly. Use raw or staging instead.
+
+  raw:
+    description: Deduplicated ingress data. Dedup macro removes duplicate loads.
+    materialization: table
+    query_recommendation: Use for debugging data quality. Prefer staging for analysis.
+
+  staging:
+    description: >
+      Cleaned and typed data. Column renames, type casts, null handling.
+      This is the "single source of truth" for each entity.
+    materialization: view
+    query_recommendation: Good for ad-hoc joins not covered by analytical/reporting layers.
+
+  analytical:
+    description: >
+      Derived fields, window functions, rolling averages. Business logic applied.
+      Still at the grain of the source data.
+    materialization: table
+    query_recommendation: Use when you need detailed time-series data with derived metrics.
+
+  operational:
+    description: >
+      Action-oriented views. Underperforming ads to pause, content to refresh,
+      campaign health scorecards. These answer "what should we do?"
+    materialization: table
+    query_recommendation: Start here for actionable insights and recommendations.
+
+  reporting:
+    description: >
+      Dashboard-ready aggregations. Campaign-level daily rollups, funnel views,
+      MTD pacing. Joins across sources where needed.
+    materialization: table
+    query_recommendation: Use for dashboards and executive summaries.
+
+# ── Key Tables (what to query for common questions) ─────────────────────────
+
+query_guide:
+  - question: "Which Facebook ads should I turn off?"
+    table: operational.opr_underperforming_ads
+    notes: >
+      Severity score 0-4. Flags: CPM spike, low CTR, zero conversions, audience fatigue.
+      Look at recommended_action column.
+
+  - question: "How are my Facebook ads performing?"
+    table: reporting.rpt_ad_performance_daily
+    notes: Campaign-level daily metrics with blended CPM/CTR/CPC and MTD pacing.
+
+  - question: "What content should I refresh?"
+    table: operational.opr_content_refresh_candidates
+    notes: >
+      Pages with declining traffic and rising position. refresh_priority scores urgency.
+      Cross-reference with CMS to check last update date.
+
+  - question: "What are my top-performing pages?"
+    table: reporting.rpt_seo_content_health
+    notes: Ranked by 28d clicks. Includes position trends and refresh status.
+
+  - question: "How are my email campaigns doing?"
+    table: operational.opr_email_campaign_health
+    notes: Health score 0-10. Flags deliverability, engagement, and unsubscribe issues.
+
+  - question: "What's my daily email send volume and reply rate?"
+    table: reporting.rpt_email_outreach_daily
+    notes: Aggregated across all Instantly campaigns. Includes 7d rolling and MTD.
+
+  - question: "Where are my leads in the funnel?"
+    table: reporting.rpt_lead_funnel
+    notes: >
+      Stage-by-stage funnel from Total → Emailed → Opened → Clicked → Replied → Interested.
+      For per-tier breakdown, query analytical.anl_lead_journey grouped by icp_tier.
+
+  - question: "What's the ICP score distribution?"
+    table: analytical.anl_lead_journey
+    sql_hint: >
+      SELECT icp_tier, count(*), avg(icp_score), avg(combined_lead_score)
+      FROM analytical.anl_lead_journey
+      GROUP BY icp_tier
+
+  - question: "Is the pipeline healthy?"
+    table: analytical.anl_pipeline_health
+    notes: Run-level metrics. is_success, node_success_rate, records_per_second.
+
+  - question: "Which A/B variant is winning?"
+    table: analytical.anl_lead_journey
+    sql_hint: >
+      SELECT ab_variant, count(*) as leads,
+        count(*) FILTER (WHERE has_replied) as replies,
+        count(*) FILTER (WHERE has_replied)::decimal / count(*) as reply_rate
+      FROM analytical.anl_lead_journey
+      WHERE ab_variant IS NOT NULL
+      GROUP BY ab_variant
+
+# ── Key Metrics ─────────────────────────────────────────────────────────────
+
+metrics:
+  # Facebook Ads
+  cpm:
+    description: Cost per 1,000 impressions (USD)
+    formula: spend / impressions * 1000
+    good_range: "$5-$15 for cold traffic, $15-$30 for retargeting"
+
+  ctr:
+    description: Click-through rate
+    formula: clicks / impressions
+    good_range: ">1% for prospecting, >3% for retargeting"
+    note: Stored as decimal (0.01 = 1%)
+
+  cost_per_lead:
+    description: Average cost to acquire a lead
+    formula: spend / leads
+    good_range: Varies by industry. Track trend, not absolute.
+
+  # SEO
+  avg_position:
+    description: Average SERP ranking position
+    good_range: "1-3 for branded, 1-10 for non-branded"
+    note: Lower is better. 1.0 = top of page 1.
+
+  position_drift:
+    description: Change in average position over 28 days
+    formula: current_7d_avg - 28d_ago_avg
+    note: Negative = improving (moving up). Positive = declining.
+
+  # Email
+  open_rate:
+    description: Unique opens / emails sent
+    good_range: ">30% for cold outreach"
+    note: Stored as decimal (0.30 = 30%)
+
+  reply_rate:
+    description: Replies / emails sent
+    good_range: ">2% for cold outreach"
+
+  bounce_rate:
+    description: Bounces / emails sent
+    good_range: "<3%. Above 5% = critical, pause and clean list."
+
+  # Leads
+  icp_score:
+    description: Ideal Customer Profile score (0-110)
+    formula: clay_base (50) + linkedin (15) + instagram (15) + transaction (20) + recency (±10)
+    tiers:
+      Hot: "90+ → immediate outreach"
+      High: "70-89 → within 48h"
+      Medium: "55-69 → standard cadence"
+      Low: "<55 → nurture only"
+
+  combined_lead_score:
+    description: ICP score + email engagement bonus
+    formula: icp_score + opened(5) + clicked(10) + replied(20)
+    note: Max theoretical = 110 + 35 = 145
+
+# ── Relationships (for joins) ──────────────────────────────────────────────
+
+relationships:
+  - from: staging.stg_facebook_insights.ad_id
+    to: staging.stg_facebook_ads.ad_id
+    type: many-to-one
+
+  - from: staging.stg_facebook_ads.ad_set_id
+    to: staging.stg_facebook_ad_sets.ad_set_id
+    type: many-to-one
+
+  - from: staging.stg_facebook_ads.campaign_id
+    to: staging.stg_facebook_campaigns.campaign_id
+    type: many-to-one
+
+  - from: staging.stg_instantly_campaign_analytics.campaign_id
+    to: staging.stg_instantly_campaigns.campaign_id
+    type: many-to-one
+
+  - from: staging.stg_instantly_leads.campaign_id
+    to: staging.stg_instantly_campaigns.campaign_id
+    type: many-to-one
+
+  - from: staging.stg_enriched_leads.email
+    to: staging.stg_instantly_leads.email
+    type: one-to-one
+    note: Left join — not all enriched leads have been emailed
+
+  - from: staging.stg_orchestrator_runs.run_id
+    to: analytical.anl_pipeline_health.run_id
+    type: many-to-one

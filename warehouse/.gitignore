@@ -1,0 +1,19 @@
+# DuckDB
+*.duckdb
+*.duckdb.wal
+
+# dbt
+target/
+dbt_packages/
+logs/
+
+# Landing zone data
+data/landing/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Environment
+.env

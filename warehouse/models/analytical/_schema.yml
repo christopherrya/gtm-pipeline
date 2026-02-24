@@ -1,0 +1,97 @@
+version: 2
+
+models:
+  - name: anl_facebook_ad_performance
+    description: >
+      Ad-level performance with full campaign hierarchy, derived efficiency ratios,
+      7d rolling averages, day-over-day trends, and cumulative spend.
+    meta:
+      layer: analytical
+      grain: one row per ad per day
+      primary_key: [ad_id, report_date]
+    columns:
+      - name: ad_id
+        tests: [not_null]
+      - name: report_date
+        tests: [not_null]
+      - name: click_rate
+        description: clicks / impressions
+      - name: landing_page_rate
+        description: landing_page_views / clicks
+      - name: lead_conversion_rate
+        description: leads / landing_page_views
+      - name: cpm_7d_avg
+        description: 7-day rolling average CPM
+      - name: spend_dod_change
+        description: Day-over-day spend delta
+
+  - name: anl_gsc_content_performance
+    description: >
+      Page-level content performance with rolling click/impression windows,
+      position trends, and content staleness signals.
+    meta:
+      layer: analytical
+      grain: one row per page per day
+      primary_key: [page_url, report_date]
+    columns:
+      - name: page_url
+        tests: [not_null]
+      - name: report_date
+        tests: [not_null]
+      - name: is_declining
+        description: True when clicks are falling and position is rising (content needs refresh)
+      - name: position_drift
+        description: Change in avg position over 28d (negative = improving)
+
+  - name: anl_instantly_email_performance
+    description: >
+      Campaign-level email performance with open/click/reply/bounce rates,
+      click-to-open rate, and rolling 7d totals.
+    meta:
+      layer: analytical
+      grain: one row per campaign per day
+      primary_key: [campaign_id, report_date]
+    columns:
+      - name: campaign_id
+        tests: [not_null]
+      - name: report_date
+        tests: [not_null]
+      - name: open_rate
+        description: unique_opened / sent
+      - name: reply_rate
+        description: replied / sent
+      - name: click_to_open_rate
+        description: unique_clicked / unique_opened
+
+  - name: anl_lead_journey
+    description: >
+      Unified lead lifecycle: enrichment data + ICP scores + email engagement.
+      One row per lead (email). Includes combined scoring and lead stage classification.
+    meta:
+      layer: analytical
+      grain: one row per lead email
+      primary_key: [email]
+    columns:
+      - name: email
+        tests: [unique, not_null]
+      - name: email_engagement_score
+        description: "0-4 score: opened(1) + clicked(1) + replied(2)"
+      - name: combined_lead_score
+        description: ICP score + email engagement bonus points
+      - name: lead_stage
+        description: "INTERESTED_REPLY > REPLIED > CLICKED > OPENED > BOUNCED > SENT > ENRICHED_ONLY"
+
+  - name: anl_pipeline_health
+    description: >
+      Orchestrator run-level health metrics: success rates, duration, throughput, and error tracking.
+    meta:
+      layer: analytical
+      grain: one row per pipeline run
+      primary_key: [run_id]
+    columns:
+      - name: run_id
+        tests: [unique, not_null]
+      - name: is_success
+        description: True if all nodes completed without errors
+      - name: records_per_second
+        description: Output throughput (records_out / duration)

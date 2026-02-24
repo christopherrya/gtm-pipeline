@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: opr_underperforming_ads
+    description: >
+      Active ads flagged for pause or review. Scores severity 0-4 based on
+      CPM spikes, low CTR, zero conversions, and audience fatigue.
+    meta:
+      layer: operational
+      use_case: "Turn off low-performing Facebook ads"
+      refresh: daily
+    columns:
+      - name: ad_id
+        tests: [not_null]
+      - name: severity_score
+        description: "0-4: count of triggered flags (CPM spike, low CTR, zero conversions, fatigue)"
+      - name: recommended_action
+        description: "PAUSE, REVIEW, or MONITOR"
+
+  - name: opr_content_refresh_candidates
+    description: >
+      Pages losing traffic or position that should be refreshed.
+      Priority scored based on declining signals and traffic volume.
+    meta:
+      layer: operational
+      use_case: "Check GSC data vs CMS content, identify posts to refresh"
+      refresh: daily
+    columns:
+      - name: page_url
+        tests: [not_null]
+      - name: refresh_priority
+        description: "0-6: higher = more urgent refresh needed"
+      - name: recommended_action
+        description: "URGENT REFRESH, REFRESH, INVESTIGATE, or MONITOR"
+
+  - name: opr_email_campaign_health
+    description: >
+      Email campaign health scorecard. Flags deliverability issues,
+      low engagement, and high unsubscribe/bounce rates.
+    meta:
+      layer: operational
+      use_case: "Monitor Instantly email campaign performance"
+      refresh: daily
+    columns:
+      - name: campaign_id
+        tests: [not_null]
+      - name: health_score
+        description: "0-10: higher = healthier campaign"
+      - name: deliverability_status
+        description: "CRITICAL, WARNING, or HEALTHY"
+      - name: engagement_tier
+        description: "EXCELLENT, GOOD, AVERAGE, or LOW"
+
+  - name: opr_lead_pipeline_summary
+    description: >
+      Lead funnel metrics by ICP tier and lead stage.
+      Shows volume, conversion rates, enrichment coverage, and engagement.
+    meta:
+      layer: operational
+      use_case: "Pipeline visibility and lead funnel analysis"
+      refresh: daily
