@@ -22,6 +22,7 @@ summary as (
         avg(linkedin_score) as avg_linkedin_score,
         avg(instagram_score) as avg_instagram_score,
         avg(transaction_score) as avg_transaction_score,
+        avg(recency_score) as avg_recency_score,
 
         -- enrichment coverage
         count(*) filter (where linkedin_url is not null)::decimal / count(*) as linkedin_coverage,

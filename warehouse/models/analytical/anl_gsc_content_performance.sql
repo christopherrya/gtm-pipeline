@@ -62,16 +62,20 @@ with_rolling as (
             partition by page_url
             order by report_date
             rows between 6 preceding and current row
-        ) as position_7d_avg,
-
-        -- position 28 days ago for trend
-        avg(weighted_avg_position) over (
-            partition by page_url
-            order by report_date
-            rows between 27 preceding and 21 preceding
-        ) as position_28d_ago_avg
+        ) as position_7d_avg
 
     from daily_page
+),
+
+-- lag the 7d position avg to get a prior-period comparison
+with_lagged as (
+    select
+        *,
+        lag(position_7d_avg, 21) over (
+            partition by page_url
+            order by report_date
+        ) as position_prior_avg
+    from with_rolling
 ),
 
 with_trends as (
@@ -85,19 +89,19 @@ with_trends as (
         ) as clicks_7d_trend,
 
         -- position movement (negative = improving)
-        position_7d_avg - coalesce(position_28d_ago_avg, position_7d_avg) as position_drift,
+        position_7d_avg - coalesce(position_prior_avg, position_7d_avg) as position_drift,
 
         -- content staleness signal: declining clicks + rising position
         case
             when clicks_7d < lag(clicks_7d, 7, clicks_7d) over (
                     partition by page_url order by report_date
                  )
-                 and position_7d_avg > coalesce(position_28d_ago_avg, position_7d_avg)
+                 and position_7d_avg > coalesce(position_prior_avg, position_7d_avg)
             then true
             else false
         end as is_declining
 
-    from with_rolling
+    from with_lagged
 )
 
 select * from with_trends

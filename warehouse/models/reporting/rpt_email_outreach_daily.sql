@@ -8,10 +8,6 @@ with campaign_perf as (
     select * from {{ ref('anl_instantly_email_performance') }}
 ),
 
-campaign_health as (
-    select * from {{ ref('opr_email_campaign_health') }}
-),
-
 -- aggregate across all campaigns per day
 daily_totals as (
     select

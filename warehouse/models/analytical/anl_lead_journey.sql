@@ -59,7 +59,7 @@ joined as (
         ) as email_engagement_score,
 
         -- derived: combined lead quality (ICP + engagement)
-        l.icp_score + (
+        coalesce(l.icp_score, 0) + (
             case when e.has_opened then 5 else 0 end
             + case when e.has_clicked then 10 else 0 end
             + case when e.has_replied then 20 else 0 end

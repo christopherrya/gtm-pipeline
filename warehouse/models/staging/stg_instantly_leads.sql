@@ -12,13 +12,13 @@ select
     upper(trim(status))                     as send_status,
     upper(trim(lead_status))                as lead_status,
     upper(trim(substatus))                  as substatus,
-    coalesce(interested::boolean, false)    as is_interested,
-    try_cast(created_at as timestamp)       as created_at,
-    try_cast(last_contacted_at as timestamp) as last_contacted_at,
-    coalesce(email_opened::boolean, false)  as has_opened,
-    coalesce(email_clicked::boolean, false) as has_clicked,
-    coalesce(email_replied::boolean, false) as has_replied,
-    coalesce(email_bounced::boolean, false) as has_bounced,
+    coalesce(try_cast(interested as boolean), false)    as is_interested,
+    try_cast(created_at as timestamp)                   as created_at,
+    try_cast(last_contacted_at as timestamp)             as last_contacted_at,
+    coalesce(try_cast(email_opened as boolean), false)  as has_opened,
+    coalesce(try_cast(email_clicked as boolean), false) as has_clicked,
+    coalesce(try_cast(email_replied as boolean), false) as has_replied,
+    coalesce(try_cast(email_bounced as boolean), false) as has_bounced,
     _loaded_at
 from source
 where lead_id is not null

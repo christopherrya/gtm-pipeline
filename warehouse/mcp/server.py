@@ -6,32 +6,34 @@ Provides tools for querying data, listing tables, describing schemas,
 and reading the semantic layer.
 
 Usage:
-    python -m warehouse.mcp.server
+    python -m mcp_server
 
-Claude Code config (~/.claude/claude_desktop_config.json):
+Claude Code config (~/.claude.json):
     {
         "mcpServers": {
             "gtm-warehouse": {
                 "command": "python",
-                "args": ["-m", "warehouse.mcp.server"],
+                "args": ["mcp_server.py"],
                 "cwd": "/path/to/gtm-pipeline/warehouse"
             }
         }
     }
 """
 
+from __future__ import annotations
+
 import json
 import logging
+import re
 from pathlib import Path
 
 import duckdb
 from mcp.server import Server
-from mcp.server.stdio import run_server
+from mcp.server.stdio import stdio_server
 from mcp.types import (
     TextContent,
     Tool,
     Resource,
-    ResourceTemplate,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,13 @@ WAREHOUSE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = WAREHOUSE_DIR / "gtm.duckdb"
 SEMANTIC_LAYER_PATH = WAREHOUSE_DIR / "mcp" / "semantic_layer.yml"
 
+# valid table name: schema.table_name (alphanumeric + underscores only)
+_TABLE_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*$")
+
+# regex to detect an explicit LIMIT clause (not inside a string or column name)
+_HAS_LIMIT_RE = re.compile(r"\bLIMIT\s+\d+", re.IGNORECASE)
+
+
 # ── DuckDB connection ──────────────────────────────────────────────────────────
 
 def get_connection() -> duckdb.DuckDBPyConnection:
@@ -47,12 +56,19 @@ def get_connection() -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(DB_PATH), read_only=True)
 
 
+def _validate_table_name(table_name: str) -> str:
+    """Validate and return a safe table name, or raise ValueError."""
+    if not _TABLE_NAME_RE.match(table_name):
+        raise ValueError(f"Invalid table name: {table_name!r}")
+    return table_name
+
+
 def execute_query(sql: str, limit: int = 500) -> dict:
     """Execute a SQL query and return results as a dict."""
     conn = get_connection()
     try:
-        # safety: enforce row limit to prevent massive result sets
-        if "limit" not in sql.lower():
+        # safety: append LIMIT if no explicit LIMIT clause found
+        if not _HAS_LIMIT_RE.search(sql):
             sql = f"{sql.rstrip().rstrip(';')} LIMIT {limit}"
 
         result = conn.execute(sql)
@@ -170,7 +186,8 @@ async def list_tools() -> list[Tool]:
 
 
 @app.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+async def call_tool(name: str, arguments: dict | None) -> list[TextContent]:
+    arguments = arguments or {}
     try:
         if name == "query_warehouse":
             result = execute_query(
@@ -215,10 +232,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text=output)]
 
         elif name == "describe_table":
-            table_name = arguments["table_name"]
+            table_name = _validate_table_name(arguments["table_name"])
             conn = get_connection()
             try:
-                # get columns
                 cols = conn.execute(f"DESCRIBE {table_name}").fetchall()
             finally:
                 conn.close()
@@ -239,8 +255,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text=content)]
 
         elif name == "sample_data":
-            table_name = arguments["table_name"]
-            sample_size = arguments.get("sample_size", 10)
+            table_name = _validate_table_name(arguments["table_name"])
+            sample_size = int(arguments.get("sample_size", 10))
             result = execute_query(
                 f"SELECT * FROM {table_name} USING SAMPLE {sample_size}",
                 limit=sample_size,
@@ -259,6 +275,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 @app.list_resources()
 async def list_resources() -> list[Resource]:
+    if not SEMANTIC_LAYER_PATH.exists():
+        return []
     return [
         Resource(
             uri="warehouse://semantic-layer",
@@ -270,8 +288,8 @@ async def list_resources() -> list[Resource]:
 
 
 @app.read_resource()
-async def read_resource(uri: str) -> str:
-    if uri == "warehouse://semantic-layer":
+async def read_resource(uri) -> str:
+    if str(uri) == "warehouse://semantic-layer":
         if SEMANTIC_LAYER_PATH.exists():
             return SEMANTIC_LAYER_PATH.read_text()
         return "Semantic layer not found."
@@ -279,7 +297,12 @@ async def read_resource(uri: str) -> str:
 
 
 async def main():
-    await run_server(app)
+    async with stdio_server() as (read_stream, write_stream):
+        await app.run(
+            read_stream,
+            write_stream,
+            app.create_initialization_options(),
+        )
 
 
 if __name__ == "__main__":

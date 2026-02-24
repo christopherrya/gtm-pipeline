@@ -7,6 +7,8 @@ Usage:
     python -m warehouse.ingest.run_all gsc instantly    # multiple sources
 """
 
+from __future__ import annotations
+
 import argparse
 import logging
 import sys

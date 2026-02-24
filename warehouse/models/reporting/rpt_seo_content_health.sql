@@ -67,10 +67,10 @@ select
     t.last_seen,
     t.days_with_data,
 
-    -- refresh status (from operational layer)
-    r.refresh_priority,
-    r.recommended_action,
-    r.is_ctr_below_expected,
+    -- refresh status (from operational layer; NULL = healthy / not flagged)
+    coalesce(r.refresh_priority, 0) as refresh_priority,
+    coalesce(r.recommended_action, 'OK') as recommended_action,
+    coalesce(r.is_ctr_below_expected, false) as is_ctr_below_expected,
     r.expected_ctr_for_position,
 
     -- traffic rank

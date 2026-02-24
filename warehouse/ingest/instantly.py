@@ -9,10 +9,11 @@ Env vars: INSTANTLY_API_KEY
 API docs: https://developer.instantly.ai/
 """
 
+from __future__ import annotations
+
 import csv
 import logging
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import requests
 
@@ -24,15 +25,18 @@ LANDING_PATH = LANDING_DIR / "instantly"
 
 BASE_URL = "https://api.instantly.ai/api/v2"
 
-HEADERS = {
-    "Authorization": f"Bearer {INSTANTLY_API_KEY}",
-    "Content-Type": "application/json",
-}
+
+def _headers() -> dict:
+    """Build auth headers at call time (not import time)."""
+    return {
+        "Authorization": f"Bearer {INSTANTLY_API_KEY}",
+        "Content-Type": "application/json",
+    }
 
 
 def _get(endpoint: str, params: dict | None = None) -> dict:
     url = f"{BASE_URL}/{endpoint}"
-    resp = requests.get(url, headers=HEADERS, params=params or {}, timeout=30)
+    resp = requests.get(url, headers=_headers(), params=params or {}, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
@@ -100,7 +104,11 @@ def ingest_campaigns():
 
 def ingest_campaign_analytics():
     """Pull per-campaign analytics (sends, opens, clicks, replies, bounces)."""
-    campaigns = _get_paginated("campaigns", {"limit": 100})
+    try:
+        campaigns = _get_paginated("campaigns", {"limit": 100})
+    except requests.HTTPError as e:
+        logger.error(f"Failed to list campaigns for analytics: {e}")
+        return []
     rows = []
 
     for c in campaigns:
