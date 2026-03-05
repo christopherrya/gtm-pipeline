@@ -24,6 +24,21 @@ Originally built to power [Discloser's](https://discloser.io) outbound engine. D
 
 ```
 gtm-pipeline/
+├── scripts/                # Mass outreach pipeline (Twenty CRM → Instantly)
+│   ├── setup-twenty-fields.js      # Create custom CRM fields
+│   ├── bulk-import-twenty.js       # Batch import 15k contacts to Twenty
+│   ├── select-from-pool.js         # Select leads from contact pool
+│   ├── prepare-batch.js            # Query CRM, assign A/B, output CSV
+│   ├── personalize-batch.js        # LLM-powered email personalization
+│   ├── push-to-instantly.js        # Push to Instantly campaigns
+│   ├── setup-instantly-campaigns.js # Configure campaign sequences
+│   ├── sync-status.js              # Poll Instantly → update CRM stages
+│   └── lib/
+│       ├── twenty-client.js        # Twenty CRM API client
+│       ├── constants.js            # Tiers, regions, funnel stages
+│       ├── llm-client.js           # Claude API wrapper + cost tracking
+│       ├── content-filter.js       # Recency/relevance gates + pattern assignment
+│       └── prompt-templates.js     # System prompt, validation, fallbacks
 ├── enrichment/             # Lead enrichment scripts
 │   ├── enrich-leads.js     # Master pipeline (LinkedIn + IG + listings + scoring)
 │   ├── linkedin-enricher.js
@@ -35,10 +50,14 @@ gtm-pipeline/
 ├── orchestrator/           # Local DAG-based lead ops server
 │   ├── server.js           # Dashboard + API (localhost:4312)
 │   ├── lib/pipeline.js     # 12-node execution graph
-│   └── lib/crm/            # CRM connectors (SuiteCRM, extensible)
+│   └── lib/crm/            # CRM connectors (Twenty CRM, extensible)
 ├── ad-generator/           # Bulk ad creative generator (React/Vite)
 │   ├── src/                # Templates, AI editor, preview, export
 │   └── server/api.ts       # AI copy generation backend
+├── flowdrip/               # Email drip campaign builder (Next.js)
+├── hub/                    # Central hub page (localhost:4000)
+│   ├── server.js           # Lightweight Node.js HTTP server
+│   └── public/             # Static HTML/CSS/JS
 ├── crm/                    # CRM integration docs
 ├── runbooks/               # Step-by-step operational guides
 └── package.json
@@ -53,6 +72,21 @@ npm install
 cp .env.example .env   # add your API keys
 ```
 
+### Start everything
+
+```bash
+npm start   # boots all services, opens hub at http://localhost:4000
+```
+
+This starts the hub, orchestrator, FlowDrip, and ad generator in parallel. Installs dependencies automatically if missing. Ctrl+C stops everything.
+
+To start individual services instead:
+
+```bash
+npm run hub                # Hub only         → http://localhost:4000
+npm run orchestrator:start # Orchestrator only → http://localhost:4312
+```
+
 ### Run the enrichment pipeline
 
 ```bash
@@ -63,17 +97,40 @@ npm run enrich -- -i data/1raw/leads.csv --test
 npm run enrich -- -i data/1raw/leads.csv -r "SF Bay"
 ```
 
-### Start the orchestrator dashboard
+## Mass Outreach Pipeline
 
-```bash
-npm run orchestrator:start   # http://localhost:4312
+The `scripts/` directory contains a complete outbound pipeline: import leads to Twenty CRM, prepare batches, personalize with Claude, push to Instantly, and sync statuses back.
+
+```
+prepare-batch.js  →  personalize-batch.js  →  push-to-instantly.js  →  sync-status.js
+   (CRM query)        (Claude LLM hooks)       (Instantly push)       (status sync)
 ```
 
-### Start the ad generator
+### LLM Email Personalization
+
+Hot/High ICP leads get Claude-powered personalized subject lines and hooks. The system uses three rotating patterns (A: The Moment, B: The Peer Observation, C: The Specific Question) with conflict resolution so agents at the same brokerage never get the same pattern.
 
 ```bash
-cd ad-generator && npm install && npm run dev   # http://localhost:3001
+# Dry run — eligibility report + cost estimate, no API calls
+node scripts/personalize-batch.js batch.csv --dry-run
+
+# Test — process only first 5 eligible leads
+node scripts/personalize-batch.js batch.csv --test
+
+# Full run with custom budget cap
+node scripts/personalize-batch.js batch.csv --max-cost 15.00
 ```
+
+Medium/Low tier leads automatically receive rule-based fallback hooks. Budget cap ($10 default) prevents runaway costs — remaining leads get fallbacks if budget is exceeded.
+
+| Command | What It Does |
+|---------|-------------|
+| `node scripts/setup-twenty-fields.js` | Create 31 custom CRM fields on Twenty People |
+| `node scripts/bulk-import-twenty.js <csv>` | Batch import contacts to Twenty CRM |
+| `node scripts/prepare-batch.js --region "SF Bay"` | Query CRM, assign A/B variants, output CSV |
+| `node scripts/personalize-batch.js <csv>` | LLM personalization for Hot/High leads |
+| `node scripts/push-to-instantly.js <csv>` | Push to Instantly campaigns |
+| `node scripts/sync-status.js` | Poll Instantly, update CRM funnel stages |
 
 ## Enrichment Pipeline
 
@@ -114,7 +171,7 @@ N01 Clay Upload Ingest
 Features:
 - Run the full DAG, dry-run, or start from any node
 - Per-run artifacts and reports stored locally
-- CRM provider abstraction (local mirror or SuiteCRM — add your own)
+- CRM provider abstraction (local mirror or Twenty CRM — add your own)
 - Instantly safety flags for email warmup periods
 - Event endpoints for webhooks and manual requeue
 
@@ -129,7 +186,8 @@ A React/Vite app for generating Facebook ad creatives in bulk. Includes multiple
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `APIFY_API_KEY` | LinkedIn, Instagram, and Compass enrichment via Apify | required |
-| `CRM_PROVIDER` | CRM backend — `local` for file-based, `suitecrm` for SuiteCRM API | `local` |
+| `ANTHROPIC_API_KEY` | Claude API — powers LLM email personalization | required for personalization |
+| `CRM_PROVIDER` | CRM backend — `local` for file-based, `twenty` for Twenty CRM API | `local` |
 | `CRM_DRY_RUN` | Prevent real CRM writes during testing | `true` |
 | `INSTANTLY_ENABLED` | Enable outbound push to Instantly | `false` |
 | `INSTANTLY_SHADOW_MODE` | Log sends without actually pushing | `true` |
@@ -145,9 +203,11 @@ A React/Vite app for generating Facebook ad creatives in bulk. Includes multiple
 
 Detailed operational guides live in `runbooks/`:
 
+- **[Hub](runbooks/hub.md)** — Central dashboard setup, health probes, adding new products
 - **[Monthly Enrichment](runbooks/monthly-enrichment.md)** — End-to-end guide for monthly lead processing
 - **[ICP Scoring](runbooks/icp-scoring.md)** — Scoring model breakdown and tuning
 - **[Listings Scraper](runbooks/listings-scraper.md)** — Brokerage scraper setup and scheduling
+- **[Mass Email Pipeline](runbooks/mass_email_pipeline.md)** — CRM import, batch prep, LLM personalization, Instantly push
 - **[Orchestrator](runbooks/orchestrator.md)** — DAG operations and CRM sync
 
 ## License

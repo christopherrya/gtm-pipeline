@@ -1,6 +1,7 @@
 import { createServer } from 'http';
 import { readFileSync, existsSync } from 'fs';
 import { join, extname } from 'path';
+import { fileURLToPath } from 'url';
 import {
   getDashboardState,
   ingestCrmWebhook,
@@ -11,8 +12,9 @@ import {
 } from './lib/pipeline.js';
 import { ensureDataDirs } from './lib/storage.js';
 
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PORT = Number(process.env.GTM_ORCHESTRATOR_PORT || 4312);
-const PUBLIC_DIR = join(process.cwd(), 'orchestrator', 'public');
+const PUBLIC_DIR = join(__dirname, 'public');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -96,6 +98,105 @@ async function router(req, res) {
     sendJson(res, 200, await ingestCrmWebhook(body));
     return;
   }
+
+  // --- GTM Outreach Review Queue API ---
+  const supabaseUrl = process.env.SUPABASE_GTM_URL;
+  const supabaseKey = process.env.SUPABASE_GTM_SERVICE_KEY;
+
+  if (req.url === '/api/review-queue' && req.method === 'GET') {
+    if (!supabaseUrl || !supabaseKey) {
+      sendJson(res, 500, { error: 'SUPABASE_GTM_URL / SUPABASE_GTM_SERVICE_KEY not set' });
+      return;
+    }
+    const resp = await fetch(
+      `${supabaseUrl}/rest/v1/gtm_review_queue?select=*,gtm_outreach_campaigns(agent_name,agent_email,listing_address)&order=created_at.desc`,
+      { headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` } }
+    );
+    sendJson(res, resp.ok ? 200 : 502, await resp.json());
+    return;
+  }
+
+  if (req.url?.startsWith('/api/review-queue/') && req.method === 'POST') {
+    if (!supabaseUrl || !supabaseKey) {
+      sendJson(res, 500, { error: 'SUPABASE_GTM_URL / SUPABASE_GTM_SERVICE_KEY not set' });
+      return;
+    }
+    const parts = req.url.split('/');
+    const reviewId = parts[3]; // /api/review-queue/{id}/{action}
+    const action = parts[4];
+    const body = await readBody(req);
+
+    if (action === 'approve') {
+      // Update review queue status to approved
+      await fetch(
+        `${supabaseUrl}/rest/v1/gtm_review_queue?id=eq.${reviewId}`,
+        {
+          method: 'PATCH',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=representation',
+          },
+          body: JSON.stringify({
+            status: 'approved',
+            reviewed_at: new Date().toISOString(),
+            draft_email_subject: body.subject || undefined,
+            draft_email_body: body.body || undefined,
+          }),
+        }
+      );
+      // Trigger the send-findings-email edge function
+      const sendResp = await fetch(`${supabaseUrl}/functions/v1/send-findings-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({ review_queue_id: reviewId }),
+      });
+      sendJson(res, sendResp.ok ? 200 : 502, await sendResp.json());
+      return;
+    }
+
+    if (action === 'reject') {
+      const resp = await fetch(
+        `${supabaseUrl}/rest/v1/gtm_review_queue?id=eq.${reviewId}`,
+        {
+          method: 'PATCH',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            status: 'rejected',
+            reviewed_at: new Date().toISOString(),
+            reviewer_notes: body.notes || '',
+          }),
+        }
+      );
+      sendJson(res, resp.ok ? 200 : 502, { ok: true });
+      return;
+    }
+
+    sendJson(res, 400, { error: `Unknown action: ${action}` });
+    return;
+  }
+
+  if (req.url === '/api/campaigns' && req.method === 'GET') {
+    if (!supabaseUrl || !supabaseKey) {
+      sendJson(res, 500, { error: 'SUPABASE_GTM_URL / SUPABASE_GTM_SERVICE_KEY not set' });
+      return;
+    }
+    const resp = await fetch(
+      `${supabaseUrl}/rest/v1/gtm_outreach_campaigns?select=id,agent_name,agent_email,listing_address,status,created_at&order=created_at.desc&limit=100`,
+      { headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` } }
+    );
+    sendJson(res, resp.ok ? 200 : 502, await resp.json());
+    return;
+  }
+
   serveStatic(req, res);
 }
 

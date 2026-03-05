@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  twenty-server:
+    image: twentycrm/twenty:latest
+    ports:
+      - '3000:3000'
+    environment:
+      - SERVER_URL=http://100.126.152.109:3000
+      - FRONT_BASE_URL=http://100.126.152.109:3000
+      - PG_DATABASE_URL=postgres://twenty:twenty@postgres:5432/twenty
+      - REDIS_URL=redis://redis:6379
+      - APP_SECRET=change-me-to-a-random-secret
+      - STORAGE_TYPE=local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  twenty-worker:
+    image: twentycrm/twenty:latest
+    command: ['yarn', 'worker:prod']
+    environment:
+      - SERVER_URL=http://100.126.152.109:3000
+      - PG_DATABASE_URL=postgres://twenty:twenty@postgres:5432/twenty
+      - REDIS_URL=redis://redis:6379
+      - APP_SECRET=change-me-to-a-random-secret
+      - STORAGE_TYPE=local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    environment:
+      - POSTGRES_USER=twenty
+      - POSTGRES_PASSWORD=twenty
+      - POSTGRES_DB=twenty
+    volumes:
+      - twenty-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U twenty -d twenty']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - twenty-redis:/data
+    restart: unless-stopped
+
+volumes:
+  twenty-db:
+  twenty-redis:

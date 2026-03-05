@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GTM Pipeline — Architecture Overview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=General+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #050505;
+  --bg-raised: #0c0c0c;
+  --bg-card: #111111;
+  --bg-card-hover: #161616;
+  --border: #1a1a1a;
+  --border-accent: #2a2a2a;
+  --text-primary: #e8e8e8;
+  --text-secondary: #888888;
+  --text-muted: #555555;
+  --accent: #e8a04c;
+  --accent-dim: rgba(232, 160, 76, 0.12);
+  --accent-glow: rgba(232, 160, 76, 0.06);
+  --green: #4ade80;
+  --green-dim: rgba(74, 222, 128, 0.1);
+  --red: #f87171;
+  --red-dim: rgba(248, 113, 113, 0.1);
+  --blue: #60a5fa;
+  --blue-dim: rgba(96, 165, 250, 0.1);
+  --purple: #a78bfa;
+  --purple-dim: rgba(167, 139, 250, 0.1);
+  --font-sans: 'General Sans', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+html { scroll-behavior: smooth; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text-primary);
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* --- GRAIN OVERLAY --- */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* --- LAYOUT --- */
+.container { max-width: 1120px; margin: 0 auto; padding: 0 32px; }
+
+/* --- NAV --- */
+nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  padding: 16px 32px;
+  background: rgba(5, 5, 5, 0.8);
+  backdrop-filter: blur(20px) saturate(1.2);
+  border-bottom: 1px solid var(--border);
+}
+nav .nav-inner {
+  max-width: 1120px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+}
+nav .logo {
+  font-weight: 700; font-size: 15px; letter-spacing: -0.02em;
+  color: var(--text-primary);
+  display: flex; align-items: center; gap: 10px;
+}
+nav .logo .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+nav .nav-links { display: flex; gap: 32px; }
+nav .nav-links a {
+  font-size: 13px; color: var(--text-secondary); text-decoration: none;
+  transition: color 0.2s;
+}
+nav .nav-links a:hover { color: var(--text-primary); }
+
+/* --- HERO --- */
+.hero {
+  padding: 180px 0 100px;
+  position: relative;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 50%; transform: translateX(-50%);
+  width: 600px; height: 600px;
+  background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+  pointer-events: none;
+}
+.hero .eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px; font-weight: 500;
+  color: var(--accent);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 24px;
+  display: flex; align-items: center; gap: 10px;
+}
+.hero .eyebrow::before {
+  content: ''; width: 24px; height: 1px; background: var(--accent);
+}
+.hero h1 {
+  font-size: clamp(40px, 5.5vw, 64px);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+  margin-bottom: 28px;
+  max-width: 700px;
+}
+.hero h1 span { color: var(--accent); }
+.hero .subtitle {
+  font-size: 17px;
+  color: var(--text-secondary);
+  max-width: 560px;
+  line-height: 1.7;
+}
+
+/* --- SECTION --- */
+section { padding: 80px 0; }
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 11px; font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.section-title {
+  font-size: 28px; font-weight: 700;
+  letter-spacing: -0.03em;
+  margin-bottom: 16px;
+}
+.section-desc {
+  color: var(--text-secondary);
+  font-size: 15px;
+  max-width: 600px;
+  margin-bottom: 48px;
+}
+
+/* --- STAT ROW --- */
+.stats {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  margin: 64px 0;
+}
+.stat {
+  background: var(--bg-card);
+  padding: 32px 28px;
+  text-align: center;
+}
+.stat .stat-value {
+  font-size: 36px; font-weight: 700; letter-spacing: -0.03em;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.stat .stat-value .unit { font-size: 18px; color: var(--text-muted); font-weight: 500; }
+.stat .stat-label {
+  font-size: 12px; color: var(--text-secondary);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+/* --- ARCHITECTURE DIAGRAM --- */
+.diagram-wrap {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 56px 48px;
+  position: relative;
+  overflow: hidden;
+}
+.diagram-wrap::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.3;
+}
+
+.flow-diagram {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  justify-content: center;
+  flex-wrap: nowrap;
+}
+.flow-node {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 12px; min-width: 120px;
+  opacity: 0; transform: translateY(16px);
+  animation: nodeIn 0.5s ease forwards;
+}
+.flow-node:nth-child(1) { animation-delay: 0.1s; }
+.flow-node:nth-child(2) { animation-delay: 0.25s; }
+.flow-node:nth-child(3) { animation-delay: 0.4s; }
+.flow-node:nth-child(4) { animation-delay: 0.55s; }
+.flow-node:nth-child(5) { animation-delay: 0.7s; }
+
+.flow-icon {
+  width: 56px; height: 56px;
+  border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+.flow-icon svg { width: 24px; height: 24px; }
+.flow-icon.amber { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(232,160,76,0.2); }
+.flow-icon.green { background: var(--green-dim); color: var(--green); border: 1px solid rgba(74,222,128,0.15); }
+.flow-icon.blue { background: var(--blue-dim); color: var(--blue); border: 1px solid rgba(96,165,250,0.15); }
+.flow-icon.purple { background: var(--purple-dim); color: var(--purple); border: 1px solid rgba(167,139,250,0.15); }
+.flow-icon.red { background: var(--red-dim); color: var(--red); border: 1px solid rgba(248,113,113,0.15); }
+
+.flow-icon::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 17px;
+  background: inherit;
+  opacity: 0;
+  filter: blur(12px);
+  z-index: -1;
+  animation: iconPulse 3s ease-in-out infinite;
+}
+.flow-node:nth-child(2) .flow-icon::after { animation-delay: 0.5s; }
+.flow-node:nth-child(3) .flow-icon::after { animation-delay: 1s; }
+.flow-node:nth-child(4) .flow-icon::after { animation-delay: 1.5s; }
+.flow-node:nth-child(5) .flow-icon::after { animation-delay: 2s; }
+
+.flow-label {
+  font-size: 13px; font-weight: 600;
+  letter-spacing: -0.01em;
+  text-align: center;
+}
+.flow-sublabel {
+  font-size: 11px; color: var(--text-muted);
+  font-family: var(--font-mono);
+  text-align: center;
+}
+
+.flow-arrow {
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 6px;
+  opacity: 0;
+  animation: arrowIn 0.4s ease forwards;
+}
+.flow-arrow:nth-of-type(2) { animation-delay: 0.2s; }
+.flow-arrow:nth-of-type(4) { animation-delay: 0.35s; }
+.flow-arrow:nth-of-type(6) { animation-delay: 0.5s; }
+.flow-arrow:nth-of-type(8) { animation-delay: 0.65s; }
+
+.flow-arrow svg { color: var(--text-muted); }
+.flow-arrow .arrow-line {
+  width: 40px; height: 1px;
+  background: linear-gradient(90deg, var(--border-accent), var(--text-muted));
+  position: relative;
+}
+.flow-arrow .arrow-line::after {
+  content: '';
+  position: absolute; right: -1px; top: -3px;
+  border: solid var(--text-muted);
+  border-width: 0 1px 1px 0;
+  padding: 3px;
+  transform: rotate(-45deg);
+}
+.flow-arrow .arrow-dot {
+  width: 30px; height: 1px;
+  background: repeating-linear-gradient(90deg, var(--text-muted) 0 4px, transparent 4px 8px);
+  position: relative;
+  overflow: visible;
+}
+.flow-arrow .arrow-dot::after {
+  content: '';
+  position: absolute; right: 0; top: -3px;
+  border: solid var(--text-muted);
+  border-width: 0 1px 1px 0;
+  padding: 3px;
+  transform: rotate(-45deg);
+}
+
+/* --- PIPELINE (FUNNEL) --- */
+.funnel {
+  display: flex;
+  gap: 2px;
+  margin: 40px 0;
+  height: 140px;
+  align-items: flex-end;
+}
+.funnel-bar {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px 8px 4px 4px;
+  display: flex; flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 12px 4px;
+  position: relative;
+  overflow: hidden;
+  opacity: 0;
+  transform: scaleY(0);
+  transform-origin: bottom;
+  animation: barGrow 0.6s ease forwards;
+}
+.funnel-bar:nth-child(1) { animation-delay: 0.1s; }
+.funnel-bar:nth-child(2) { animation-delay: 0.2s; }
+.funnel-bar:nth-child(3) { animation-delay: 0.3s; }
+.funnel-bar:nth-child(4) { animation-delay: 0.4s; }
+.funnel-bar:nth-child(5) { animation-delay: 0.5s; }
+.funnel-bar:nth-child(6) { animation-delay: 0.6s; }
+.funnel-bar:nth-child(7) { animation-delay: 0.7s; }
+.funnel-bar:nth-child(8) { animation-delay: 0.8s; }
+
+.funnel-bar::before {
+  content: '';
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: var(--fill, 60%);
+  border-radius: 0 0 3px 3px;
+  transition: height 1s ease;
+}
+.funnel-bar.c-amber::before { background: linear-gradient(to top, var(--accent), transparent); opacity: 0.15; }
+.funnel-bar.c-green::before { background: linear-gradient(to top, var(--green), transparent); opacity: 0.15; }
+.funnel-bar.c-blue::before { background: linear-gradient(to top, var(--blue), transparent); opacity: 0.15; }
+.funnel-bar.c-purple::before { background: linear-gradient(to top, var(--purple), transparent); opacity: 0.15; }
+.funnel-bar.c-red::before { background: linear-gradient(to top, var(--red), transparent); opacity: 0.15; }
+
+.funnel-bar .bar-label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  writing-mode: vertical-lr;
+  transform: rotate(180deg);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* --- TRADEOFF CARDS --- */
+.tradeoffs-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+.tradeoff-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 32px 28px;
+  transition: border-color 0.3s, background 0.3s;
+  opacity: 0;
+  transform: translateY(20px);
+}
+.tradeoff-card.visible {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.5s ease, transform 0.5s ease, border-color 0.3s, background 0.3s;
+}
+.tradeoff-card:hover {
+  border-color: var(--border-accent);
+  background: var(--bg-card-hover);
+}
+.tradeoff-card .card-icon {
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 20px;
+}
+.tradeoff-card .card-icon svg { width: 20px; height: 20px; }
+.tradeoff-card h3 {
+  font-size: 16px; font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-bottom: 10px;
+}
+.tradeoff-card p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+.tradeoff-card .tag {
+  display: inline-flex;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 4px 10px;
+  border-radius: 6px;
+  margin-top: 16px;
+  font-weight: 500;
+}
+.tradeoff-card .tag.gain { background: var(--green-dim); color: var(--green); }
+.tradeoff-card .tag.cost { background: var(--red-dim); color: var(--red); }
+
+/* --- PRODUCT LED SECTION --- */
+.pl-flow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-top: 40px;
+}
+.pl-step {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px 24px;
+  position: relative;
+  opacity: 0;
+  transform: translateY(20px);
+}
+.pl-step.visible {
+  opacity: 1; transform: translateY(0);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.pl-step .step-num {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+  letter-spacing: 0.06em;
+}
+.pl-step h4 {
+  font-size: 15px; font-weight: 600;
+  margin-bottom: 8px;
+  letter-spacing: -0.01em;
+}
+.pl-step p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* --- BODY TEXT BLOCKS --- */
+.prose {
+  max-width: 680px;
+  margin-bottom: 48px;
+}
+.prose p {
+  font-size: 15px;
+  color: var(--text-secondary);
+  line-height: 1.75;
+  margin-bottom: 20px;
+}
+.prose p strong { color: var(--text-primary); font-weight: 600; }
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 2px 7px;
+  border-radius: 5px;
+  color: var(--accent);
+}
+
+/* --- SHIPPED LIST --- */
+.shipped-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  margin: 40px 0;
+}
+.shipped-item {
+  background: var(--bg-card);
+  padding: 20px 28px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  opacity: 0;
+}
+.shipped-item.visible {
+  opacity: 1;
+  transition: opacity 0.4s ease;
+}
+.shipped-item .item-num {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 28px;
+}
+.shipped-item .item-text {
+  font-size: 14px;
+  color: var(--text-secondary);
+  flex: 1;
+}
+.shipped-item .item-text strong { color: var(--text-primary); }
+.shipped-item .item-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--green);
+  background: var(--green-dim);
+  padding: 4px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+/* --- FOOTER --- */
+footer {
+  padding: 60px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 40px;
+}
+footer p {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* --- KEYFRAMES --- */
+@keyframes nodeIn {
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes arrowIn {
+  to { opacity: 1; }
+}
+@keyframes iconPulse {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.5; }
+}
+@keyframes barGrow {
+  to { opacity: 1; transform: scaleY(1); }
+}
+
+/* --- DIVIDER --- */
+.divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-accent), transparent);
+  margin: 20px 0;
+}
+
+/* --- RESPONSIVE --- */
+@media (max-width: 768px) {
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .tradeoffs-grid { grid-template-columns: 1fr; }
+  .pl-flow { grid-template-columns: 1fr; }
+  .flow-diagram { flex-wrap: wrap; gap: 16px; justify-content: center; }
+  .flow-arrow { display: none; }
+  .container { padding: 0 20px; }
+  nav { padding: 14px 20px; }
+  .hero { padding: 140px 0 60px; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <div class="logo"><div class="dot"></div>Discloser GTM</div>
+    <div class="nav-links">
+      <a href="#architecture">Architecture</a>
+      <a href="#tradeoffs">Tradeoffs</a>
+      <a href="#product-led">Product-Led</a>
+      <a href="#shipped">Shipped</a>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="eyebrow">Product Engineering Brief</div>
+    <h1>Building a <span>two-system</span> outbound pipeline from scratch</h1>
+    <p class="subtitle">How we went from 15,000 raw contacts in a spreadsheet to a fully automated cold email pipeline with CRM sync, ICP scoring, A/B testing, and re-engagement loops — in a single build session.</p>
+  </section>
+
+  <!-- STATS -->
+  <div class="stats" data-animate="stats">
+    <div class="stat">
+      <div class="stat-value">15<span class="unit">k</span></div>
+      <div class="stat-label">Contacts imported</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">31</div>
+      <div class="stat-label">Custom CRM fields</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">8</div>
+      <div class="stat-label">Email campaigns</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">9</div>
+      <div class="stat-label">Pipeline scripts</div>
+    </div>
+  </div>
+
+  <!-- PROBLEM -->
+  <section>
+    <div class="prose">
+      <p><strong>The core question was simple:</strong> how do you get a real estate disclosure product in front of 15,000 agents without a sales team, a marketing budget, or a year to build infrastructure?</p>
+      <p>The answer turned out to be architectural. Instead of buying a marketing platform with built-in everything, we designed a two-system pipeline — <strong>Twenty CRM</strong> as the contact source of truth and <strong>Instantly</strong> as the sending engine — stitched together by scripts that Claude Code generates, maintains, and operates. The automation layer isn't a SaaS product. It's the AI itself.</p>
+    </div>
+  </section>
+
+  <!-- ARCHITECTURE -->
+  <section id="architecture">
+    <div class="section-label">01 &mdash; Architecture</div>
+    <div class="section-title">Pipeline flow</div>
+    <p class="section-desc">Contacts move through five stages. Each transition is handled by a dedicated script with validation, deduplication, and rollback protection. No manual data entry at any step.</p>
+
+    <div class="diagram-wrap">
+      <div class="flow-diagram">
+        <div class="flow-node">
+          <div class="flow-icon amber">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          </div>
+          <div class="flow-label">Clay CSVs</div>
+          <div class="flow-sublabel">15k contacts</div>
+        </div>
+        <div class="flow-arrow"><div class="arrow-line"></div></div>
+        <div class="flow-node">
+          <div class="flow-icon green">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          </div>
+          <div class="flow-label">Enrich + Score</div>
+          <div class="flow-sublabel">Apify + ICP</div>
+        </div>
+        <div class="flow-arrow"><div class="arrow-line"></div></div>
+        <div class="flow-node">
+          <div class="flow-icon blue">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <div class="flow-label">Twenty CRM</div>
+          <div class="flow-sublabel">Source of truth</div>
+        </div>
+        <div class="flow-arrow"><div class="arrow-line"></div></div>
+        <div class="flow-node">
+          <div class="flow-icon purple">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          </div>
+          <div class="flow-label">Instantly</div>
+          <div class="flow-sublabel">6 warm inboxes</div>
+        </div>
+        <div class="flow-arrow"><div class="arrow-dot"></div></div>
+        <div class="flow-node">
+          <div class="flow-icon red">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          </div>
+          <div class="flow-label">Sync Loop</div>
+          <div class="flow-sublabel">30-min poll</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FUNNEL STAGES -->
+  <section>
+    <div class="section-label">02 &mdash; Funnel</div>
+    <div class="section-title">Contact lifecycle</div>
+    <p class="section-desc">Eight primary stages, four post-sequence states, and automated re-engagement routing with cooldown timers. Timestamps are write-once — we never lose the moment of first contact or first reply.</p>
+    <div class="funnel">
+      <div class="funnel-bar c-amber" style="--fill: 100%"><div class="bar-label">new</div></div>
+      <div class="funnel-bar c-amber" style="--fill: 95%"><div class="bar-label">scored</div></div>
+      <div class="funnel-bar c-blue" style="--fill: 80%"><div class="bar-label">queued</div></div>
+      <div class="funnel-bar c-purple" style="--fill: 70%"><div class="bar-label">contacted</div></div>
+      <div class="funnel-bar c-green" style="--fill: 40%"><div class="bar-label">opened</div></div>
+      <div class="funnel-bar c-green" style="--fill: 15%"><div class="bar-label">replied</div></div>
+      <div class="funnel-bar c-red" style="--fill: 10%"><div class="bar-label">bounced</div></div>
+      <div class="funnel-bar c-red" style="--fill: 5%"><div class="bar-label">unsub</div></div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- TRADEOFFS -->
+  <section id="tradeoffs">
+    <div class="section-label">03 &mdash; Decisions</div>
+    <div class="section-title">Tradeoffs we made</div>
+    <p class="section-desc">Every architectural choice traded something. These are the four decisions that shaped the system, why we made them, and what we accepted losing.</p>
+
+    <div class="tradeoffs-grid">
+      <div class="tradeoff-card" data-animate="card">
+        <div class="card-icon" style="background: var(--blue-dim); color: var(--blue);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        </div>
+        <h3>Twenty CRM over SuiteCRM</h3>
+        <p>We traded SuiteCRM's mature workflows and reporting for Twenty's clean API and flexible data model. The bet: Claude Code <em>is</em> the automation layer, so we don't need built-in workflow engines. We need an API that's fast to script against. Twenty's batch endpoints and custom objects made 15k-record operations trivial. The risk is that Twenty is pre-1.0 software — we pin versions and accept breaking changes as the cost of velocity.</p>
+        <span class="tag gain">Gained: API-first flexibility</span>
+      </div>
+
+      <div class="tradeoff-card" data-animate="card">
+        <div class="card-icon" style="background: var(--accent-dim); color: var(--accent);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </div>
+        <h3>Two systems, not three</h3>
+        <p>We dropped Supabase from the outbound path entirely. One fewer system to sync means one fewer class of "data got out of sync" bugs. The cost: no SQL-queryable analytics on campaign performance, and no backup data store if Twenty goes down. We accepted this because speed to market mattered more than architectural completeness. Supabase re-enters the picture for Bucket 2 (inbound disclosure processing) — but outbound stays clean and simple.</p>
+        <span class="tag gain">Gained: Simpler mental model</span>
+      </div>
+
+      <div class="tradeoff-card" data-animate="card">
+        <div class="card-icon" style="background: var(--green-dim); color: var(--green);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <h3>Polling over webhooks</h3>
+        <p>We poll Instantly every 30 minutes instead of receiving webhooks. This eliminated the need for a public endpoint, SSL certs, and webhook verification — the CRM runs on a Mac Mini behind Tailscale. The tradeoff is latency: a hot lead replies and we find out 30 minutes later. For mass cold outreach, this is acceptable. For Bucket 2's targeted outreach where individual replies matter, we'll add real-time webhooks.</p>
+        <span class="tag cost">Cost: 30-min reply latency</span>
+      </div>
+
+      <div class="tradeoff-card" data-animate="card">
+        <div class="card-icon" style="background: var(--purple-dim); color: var(--purple);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        </div>
+        <h3>Self-hosted over cloud</h3>
+        <p>Running Twenty on a Mac Mini means zero per-contact costs at any scale — 15k now, potentially 100k later. Full Postgres access for raw queries and bulk fixes. The risk is uptime: no redundancy, no failover, no automatic backups unless we set up <code>pg_dump</code>. We mitigate with Tailscale for reliable access and a daily backup cron. If uptime becomes critical, we migrate to a Hetzner VM.</p>
+        <span class="tag cost">Cost: Single point of failure</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- PRODUCT-LED OUTREACH -->
+  <section id="product-led">
+    <div class="section-label">04 &mdash; Bucket 2</div>
+    <div class="section-title">Product-led outreach</div>
+    <p class="section-desc">The second motion uses Discloser's own product as the conversion mechanism. Reach out as a buyer, process returned disclosures through the AI pipeline, then send findings back to the agent. They onboard to see the full analysis — already converted before signup.</p>
+
+    <div class="pl-flow">
+      <div class="pl-step" data-animate="card">
+        <div class="step-num">01 — OUTBOUND</div>
+        <h4>Buyer inquiry</h4>
+        <p>Scrape active listings at major brokerages. Send a personal buyer inquiry via Instantly referencing the specific property. Each email gets a unique reply-to address for automatic correlation.</p>
+      </div>
+      <div class="pl-step" data-animate="card">
+        <div class="step-num">02 — PROCESS</div>
+        <h4>Auto-ingest disclosures</h4>
+        <p>Agent replies with PDFs. Resend webhook parses attachments, uploads to storage, triggers the existing OCR + AI pipeline. Document AI extracts findings, Voyage AI generates embeddings. Zero manual steps.</p>
+      </div>
+      <div class="pl-step" data-animate="card">
+        <div class="step-num">03 — CONVERT</div>
+        <h4>Findings as CTA</h4>
+        <p>Send top 2-3 critical findings as teasers. CTA links to a signup page with their property pre-loaded. Email pre-filled, value demonstrated before account creation. 3-8% end-to-end conversion target.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- WHAT SHIPPED -->
+  <section id="shipped">
+    <div class="section-label">05 &mdash; Execution</div>
+    <div class="section-title">What shipped in one session</div>
+    <p class="section-desc">Everything below was built, tested, and deployed in a single build session. Nine scripts, 31 CRM fields, eight email campaigns with real copy, and a complete re-engagement system.</p>
+
+    <div class="shipped-grid">
+      <div class="shipped-item" data-animate="shipped">
+        <div class="item-num">01</div>
+        <div class="item-text"><strong>Shared libraries</strong> — Rate-limited API client, funnel stages, ICP tiers, region mapping, re-engagement rules, sending ramp config</div>
+        <div class="item-status">shipped</div>
+      </div>
+      <div class="shipped-item" data-animate="shipped">
+        <div class="item-num">02</div>
+        <div class="item-text"><strong>CRM schema</strong> — 31 custom fields across core enrichment, pipeline tracking, and write-once event timestamps</div>
+        <div class="item-status">shipped</div>
+      </div>
+      <div class="shipped-item" data-animate="shipped">
+        <div class="item-num">03</div>
+        <div class="item-text"><strong>Pool selection</strong> — CSV ingestion, cross-file dedup, CRM dedup, ICP-tier sorting, enrichment-ready output</div>
+        <div class="item-status">shipped</div>
+      </div>
+      <div class="shipped-item" data-animate="shipped">
+        <div class="item-num">04</div>
+        <div class="item-text"><strong>Bulk import</strong> — Batch upserts (60/req), auto company creation, field coverage reporting, 15k imports in ~3 minutes</div>
+        <div class="item-status">shipped</div>
+      </div>
+      <div class="shipped-item" data-animate="shipped">
+        <div class="item-num">05</div>
+        <div class="item-text"><strong>Batch preparation</strong> — CRM query, suppression logic, deterministic A/B hash, sending ramp, test dedup via history field</div>
+        <div class="item-status">shipped</div>
+      </div>
+      <div class="shipped-item" data-animate="shipped">
+        <div class="item-num">06</div>
+        <div class="item-text"><strong>Instantly push</strong> — A/B split, round-robin inbox assignment, CRM writeback with campaign IDs and timestamps</div>
+        <div class="item-status">shipped</div>
+      </div>
+      <div class="shipped-item" data-animate="shipped">
+        <div class="item-num">07</div>
+        <div class="item-text"><strong>Status sync</strong> — 30-min polling, stage transitions, sequence completion detection, re-engagement routing, funnel reporting</div>
+        <div class="item-status">shipped</div>
+      </div>
+      <div class="shipped-item" data-animate="shipped">
+        <div class="item-num">08</div>
+        <div class="item-text"><strong>Email campaigns</strong> — 8 campaigns with 4-email sequences, tier-specific copy, brand voice compliance, no placeholders</div>
+        <div class="item-status">shipped</div>
+      </div>
+      <div class="shipped-item" data-animate="shipped">
+        <div class="item-num">09</div>
+        <div class="item-text"><strong>Re-engagement system</strong> — Cooldown timers (17-90 days), nurture routing, soft followup, bounce recovery, unsub enforcement</div>
+        <div class="item-status">shipped</div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Discloser GTM Pipeline &mdash; Architecture Overview &mdash; March 2026</p>
+  </footer>
+
+</div>
+
+<script>
+// Intersection Observer for scroll animations
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach((entry, i) => {
+    if (entry.isIntersecting) {
+      const delay = Array.from(entry.target.parentElement?.children || [])
+        .filter(c => c.hasAttribute('data-animate'))
+        .indexOf(entry.target);
+      setTimeout(() => {
+        entry.target.classList.add('visible');
+      }, Math.max(0, delay) * 100);
+      observer.unobserve(entry.target);
+    }
+  });
+}, { threshold: 0.15 });
+
+document.querySelectorAll('[data-animate]').forEach(el => observer.observe(el));
+</script>
+
+</body>
+</html>
