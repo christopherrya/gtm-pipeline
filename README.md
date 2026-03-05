@@ -54,10 +54,6 @@ gtm-pipeline/
 ├── ad-generator/           # Bulk ad creative generator (React/Vite)
 │   ├── src/                # Templates, AI editor, preview, export
 │   └── server/api.ts       # AI copy generation backend
-├── flowdrip/               # Email drip campaign builder (Next.js)
-├── hub/                    # Central hub page (localhost:4000)
-│   ├── server.js           # Lightweight Node.js HTTP server
-│   └── public/             # Static HTML/CSS/JS
 ├── crm/                    # CRM integration docs
 ├── runbooks/               # Step-by-step operational guides
 └── package.json
@@ -75,16 +71,7 @@ cp .env.example .env   # add your API keys
 ### Start everything
 
 ```bash
-npm start   # boots all services, opens hub at http://localhost:4000
-```
-
-This starts the hub, orchestrator, FlowDrip, and ad generator in parallel. Installs dependencies automatically if missing. Ctrl+C stops everything.
-
-To start individual services instead:
-
-```bash
-npm run hub                # Hub only         → http://localhost:4000
-npm run orchestrator:start # Orchestrator only → http://localhost:4312
+npm run orchestrator:start # Orchestrator → http://localhost:4312
 ```
 
 ### Run the enrichment pipeline
@@ -203,7 +190,6 @@ A React/Vite app for generating Facebook ad creatives in bulk. Includes multiple
 
 Detailed operational guides live in `runbooks/`:
 
-- **[Hub](runbooks/hub.md)** — Central dashboard setup, health probes, adding new products
 - **[Monthly Enrichment](runbooks/monthly-enrichment.md)** — End-to-end guide for monthly lead processing
 - **[ICP Scoring](runbooks/icp-scoring.md)** — Scoring model breakdown and tuning
 - **[Listings Scraper](runbooks/listings-scraper.md)** — Brokerage scraper setup and scheduling
