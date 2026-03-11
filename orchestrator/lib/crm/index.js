@@ -1,4 +1,4 @@
-import { hasSuiteConfig, syncContactsToSuitecrm } from './suitecrm.js';
+import { hasTwentyConfig, syncContactsToTwenty } from './twenty.js';
 
 function provider() {
   return (process.env.CRM_PROVIDER || 'local').toLowerCase();
@@ -9,13 +9,13 @@ export function activeCrmProvider() {
 }
 
 export function hasCrmConfig() {
-  if (provider() === 'suitecrm') return hasSuiteConfig();
+  if (provider() === 'twenty') return hasTwentyConfig();
   return true;
 }
 
 export async function syncContactsToCrm(contacts) {
   const p = provider();
-  if (p === 'suitecrm') return syncContactsToSuitecrm(contacts);
+  if (p === 'twenty') return syncContactsToTwenty(contacts);
   return {
     mode: 'local-only',
     created: 0,

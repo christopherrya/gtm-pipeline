@@ -10,7 +10,7 @@ Current status:
 
 - Pipeline runtime and UI are implemented under `GTM/orchestrator/`.
 - CRM provider abstraction is implemented in `N10`.
-- `CRM_PROVIDER=suitecrm` is enabled in `.env`.
+- `CRM_PROVIDER=twenty` is enabled in `.env`.
 - Instantly sending is safety-disabled by default.
 
 ## Entry Points
@@ -65,7 +65,7 @@ Current status:
 10. `N10_CrmUpsert`
   - Always updates local CRM mirror state.
   - Conditionally syncs to remote CRM via provider abstraction:
-    - `local` or `suitecrm`.
+    - `local` or `twenty`.
 
 11. `N11_InstantlyPush`
   - Currently controlled by safety flags:
@@ -105,15 +105,16 @@ Current status:
 
 ### CRM
 
-- `CRM_PROVIDER=suitecrm|local`
+- `CRM_PROVIDER=twenty|local`
 - `CRM_DRY_RUN=true|false`
 - `CRM_MAX_UPSERT_PER_RUN=500`
 
-SuiteCRM-specific:
+Twenty-specific:
 
-- `SUITECRM_BASE_URL=http://...`
-- `SUITECRM_USERNAME=...`
-- `SUITECRM_PASSWORD=...`
+- `TWENTY_BASE_URL=https://discloser.twenty.com`
+- `TWENTY_API_KEY=<your-api-key>`
+
+See `crm/crm.md` for full Twenty deployment, custom field setup, and access details.
 
 ### Instantly Safety
 
