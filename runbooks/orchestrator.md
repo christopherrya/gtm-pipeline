@@ -111,7 +111,7 @@ Current status:
 
 Twenty-specific:
 
-- `TWENTY_BASE_URL=http://100.126.152.109:3000`
+- `TWENTY_BASE_URL=https://discloser.twenty.com`
 - `TWENTY_API_KEY=<your-api-key>`
 
 See `crm/crm.md` for full Twenty deployment, custom field setup, and access details.

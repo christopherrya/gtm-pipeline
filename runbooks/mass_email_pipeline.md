@@ -16,7 +16,7 @@ This plan covers **Bucket 1 only** — the mass outreach pipeline targeting real
 
 | System | Status | Verified |
 |--------|--------|----------|
-| Twenty CRM (Mac Mini @ `http://100.126.152.109:3000`) | Running, API key generated | ✅ API tested, valid responses |
+| Twenty CRM (Cloud @ `https://discloser.twenty.com`) | Running, API key generated | ✅ API tested, valid responses |
 | Twenty CRM — 15 custom fields on People | Created | ✅ Confirmed in UI |
 | Instantly — 6 warm inboxes | Warmed, sending | ✅ Sender reputation good |
 | Instantly API access | Key exists | ❌ **NOT TESTED — must verify before build** |
@@ -214,19 +214,22 @@ Usage: node prepare-batch.js --region "SF Bay" --min-score 50 [--tier hot,high] 
 ### 4b. `scripts/push-to-instantly.js` — Push to Instantly + Update Twenty
 
 ```
-Usage: node push-to-instantly.js <batch-csv> [--campaign-a ID] [--campaign-b ID] [--dry-run]
+Usage: node push-to-instantly.js <batch-csv> [--dry-run]
 ```
+
+**Campaign routing:** Fetches all campaigns from the Instantly API and matches each lead to its campaign by name convention: `{tier}_{variant}_{testName}` (e.g. `hot_A_subject_v1`, `medium_C_nurture_v1`). No campaign IDs in `.env` needed.
 
 **What it does:**
 
-1. Load email → Twenty ID map via `loadEmailIdMap()`
-2. Split CSV by A/B variant
-3. Push variant A contacts to Instantly Campaign A via API
-4. Push variant B contacts to Instantly Campaign B via API
+1. Fetch campaign list from Instantly → build name→ID lookup map
+2. For each lead, resolve campaign from `icp_tier` + `abVariant` + `testName`
+3. Group leads by resolved campaign, push each group via Instantly API
+4. Warn on any unresolved leads (missing campaign in Instantly)
 5. After successful push, batch update Twenty CRM for each contact:
    - `funnelStage: 'contacted'`
    - `lastOutreachDate: now()`
    - `instantlyCampaignId: <campaign_id>`
+   - `assignedInbox: <sender_email>`
    - `replyToAddress: disclosure-{uuid}@inbound.discloser.co`
 
 ### 4c. `scripts/sync-status.js` — Poll Instantly → Update Twenty
@@ -319,7 +322,7 @@ Requires `ANTHROPIC_API_KEY` in `.env`.
 
 ```
 # Twenty CRM (already exists)
-TWENTY_BASE_URL=http://100.126.152.109:3000
+TWENTY_BASE_URL=https://discloser.twenty.com
 TWENTY_API_KEY=<your-key>
 
 # Instantly
@@ -328,7 +331,7 @@ INSTANTLY_CAMPAIGN_A=<campaign-id-variant-a>
 INSTANTLY_CAMPAIGN_B=<campaign-id-variant-b>
 
 # Object metadata (already known)
-TWENTY_PEOPLE_METADATA_ID=1b8108be-5895-497e-832a-1c8101a06040
+TWENTY_PEOPLE_METADATA_ID=93add812-8163-4b64-ac04-e75a4a86b7b9
 ```
 
 ### `scripts/package.json` dependencies
@@ -373,7 +376,7 @@ Run these in order. Every checkpoint requires **visible proof** printed to the c
 
 | # | Test | Command | Expected Result |
 |---|------|---------|-----------------|
-| 1a | Twenty API health | `curl -H "Authorization: Bearer $KEY" http://100.126.152.109:3000/api/objects/people?limit=1` | Valid JSON with People schema |
+| 1a | Twenty API health | `curl -H "Authorization: Bearer $KEY" https://discloser.twenty.com/api/objects/people?limit=1` | Valid JSON with People schema |
 | 1b | Instantly API health | `curl "https://api.instantly.ai/api/v1/account/list?api_key=$KEY"` | JSON listing 6 inbox accounts |
 | 1c | Twenty field creation | POST 7 new fields via API | Fields visible in Twenty UI under People settings |
 

@@ -33,9 +33,12 @@ import {
   toInt,
 } from './lib/twenty-client.js';
 import { extractRegion, icpTier } from './lib/constants.js';
+import { createLogger } from './lib/logger.js';
+
+const log = createLogger({ step: 'select' });
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const POOL_DIR = join(__dirname, '../leads/pool');
+const POOL_DIR = process.env.LEAD_POOL_DIR || join(__dirname, '../leads/pool');
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -103,11 +106,20 @@ function loadPool() {
       row._location = row.Location || row.location || row.City || row.city || '';
       row._region = row.region || extractRegion(row._location);
       row._linkedinUrl = row['LinkedIn Profile'] || row.linkedin_url || '';
-      row._igHandle = row['IG handle'] || row.ig_username || '';
+      // IG handle may be a full URL — extract just the username
+      // Clay CSVs use various column names; 'Instagram Profile URL' often has garbage like "Response"
+      // so prioritize 'Instagram URL' (real URLs) and 'IG handle' (clean handles)
+      const igGarbage = /^(response|n\/a|none|error|null|undefined|true|false)$/i;
+      const igCandidates = [
+        row['IG handle'], row['Instagram URL'], row['Instagram Profile URL'], row.ig_username
+      ].filter(v => v && !igGarbage.test(v.trim()));
+      const rawIg = igCandidates.find(v => /instagram\.com\//.test(v) || /^@?\w[\w.]{0,28}\w$/.test(v)) || '';
+      row._igHandle = rawIg.replace(/^https?:\/\/(www\.)?instagram\.com\//, '').replace(/[/?#].*$/, '').replace(/^@/, '') || '';
       row._jobTitle = row.job_title || row['Job Title'] || '';
 
       // Use Clay-provided ICP score if available, otherwise 0 (will be scored during enrichment)
-      row._icpScore = toInt(row.icp_score || row['ICP Score']);
+      // "ICP Post-Instagram" is the final score after all Clay enrichment passes
+      row._icpScore = toInt(row['ICP Post-Instagram'] || row['ICP Post Work Email'] || row['ICP Post-LinkedIn'] || row.icp_score || row['ICP Score']);
       row._icpTier = row.icp_tier || row['ICP Tier'] || (row._icpScore > 0 ? icpTier(row._icpScore) : '');
 
       row._sourceFile = file;
@@ -118,7 +130,7 @@ function loadPool() {
     console.log(`    ${file}: ${added} leads loaded${dupes > 0 ? `, ${dupes} intra-pool dupes skipped` : ''}`);
   }
 
-  console.log(`  Total unique leads in pool: ${allLeads.length}`);
+  log.info('Pool loaded', { totalUnique: allLeads.length, files: files.length });
   return allLeads;
 }
 
@@ -153,8 +165,7 @@ async function main() {
     }
     return true;
   });
-  console.log(`  Already in CRM (skipped): ${crmDupCount}`);
-  console.log(`  Available for selection: ${candidates.length}`);
+  log.info('CRM dedup complete', { crmDups: crmDupCount, available: candidates.length });
 
   // Apply region filter
   if (regionFilter) {
@@ -181,6 +192,25 @@ async function main() {
     if (tierA !== tierB) return tierA - tierB;
     return b._icpScore - a._icpScore;
   });
+
+  // Company spacing — only 1 lead per company per batch. Same-company leads
+  // are deferred to the back of the list so they land in future batches, not skipped.
+  const seenCompanies = new Set();
+  const thisBatch = [];
+  const deferred = [];
+  for (const lead of candidates) {
+    const company = (lead._company || '').toLowerCase().trim();
+    if (!company || !seenCompanies.has(company)) {
+      thisBatch.push(lead);
+      if (company) seenCompanies.add(company);
+    } else {
+      deferred.push(lead);
+    }
+  }
+  if (deferred.length > 0) {
+    console.log(`  Company spacing: ${deferred.length} same-company leads deferred to future batches`);
+  }
+  candidates = [...thisBatch, ...deferred];
 
   // Apply limit
   const selected = candidates.slice(0, limit);

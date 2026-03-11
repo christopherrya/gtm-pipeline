@@ -7,18 +7,17 @@
  * pool (lowest daily send count), pushes to the correct Instantly campaign,
  * and updates Twenty CRM with campaign ID + assigned inbox.
  *
- * Inbox routing:
- *   - All 6 inboxes send to all regions (shared pool, no per-region lock)
- *   - Each lead is assigned the inbox with the lowest daily send count
- *   - assignedInbox is stored in Twenty so nurture (Campaign C) reuses the same sender
- *   - A contact is never sent from two different inboxes across campaigns
+ * Campaign routing:
+ *   Fetches all campaigns from Instantly and matches each lead to its campaign
+ *   by name: {tier}_{variant}_{testName} (e.g. hot_A_subject_v1, medium_C_nurture_v1).
  *
  * Usage:
- *   node scripts/push-to-instantly.js <csv> [--campaign-a ID] [--campaign-b ID] [--campaign-c ID] [--dry-run]
+ *   node scripts/push-to-instantly.js <csv> [--dry-run]
  */
 
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { resolve, dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { parse } from 'csv-parse/sync';
 import {
   hasTwentyConfig,
@@ -28,9 +27,12 @@ import {
   toInt,
 } from './lib/twenty-client.js';
 import { BATCH_SIZE, getInboxPool, buildCampaignLabel } from './lib/constants.js';
+import { createLogger } from './lib/logger.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
-// CLI
+// CLI helpers (used when running directly)
 // ---------------------------------------------------------------------------
 
 const args = process.argv.slice(2);
@@ -40,18 +42,6 @@ function getArg(flag) {
 }
 function hasFlag(flag) {
   return args.includes(flag);
-}
-
-const csvPath = args.find((a) => !a.startsWith('-'));
-const campaignA = getArg('--campaign-a') || getEnv('INSTANTLY_CAMPAIGN_A');
-const campaignB = getArg('--campaign-b') || getEnv('INSTANTLY_CAMPAIGN_B');
-const campaignC = getArg('--campaign-c') || getEnv('INSTANTLY_CAMPAIGN_C');
-const campaignD = getArg('--campaign-d') || getEnv('INSTANTLY_CAMPAIGN_D');
-const dryRun = hasFlag('--dry-run');
-
-if (!csvPath) {
-  console.error('Usage: node scripts/push-to-instantly.js <csv> [--campaign-a ID] [--campaign-b ID] [--campaign-c ID] [--campaign-d ID] [--dry-run]');
-  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -81,15 +71,52 @@ async function instantlyFetch(method, path, body) {
   return response.json();
 }
 
-async function pushLeadsToCampaign(campaignId, leads) {
-  const results = { pushed: 0, errors: 0 };
-  for (let i = 0; i < leads.length; i += BATCH_SIZE) {
-    const chunk = leads.slice(i, i + BATCH_SIZE);
-    const payload = chunk.map((lead) => ({
+/**
+ * Fetch all campaigns from Instantly and build a name→ID lookup map.
+ */
+async function fetchCampaignMap(log) {
+  log.info('Fetching campaign list from Instantly');
+  const result = await withRetry(() => instantlyFetch('GET', '/campaigns?limit=100'), 2, [3000, 10000]);
+  const campaigns = result?.items || result?.data || result || [];
+
+  const map = new Map();
+  for (const c of campaigns) {
+    const name = (c.name || '').trim();
+    const id = c.id;
+    if (name && id) {
+      map.set(name, id);
+    }
+  }
+  log.info('Campaign map built', { count: map.size });
+  return map;
+}
+
+/**
+ * Resolve the Instantly campaign ID for a lead row using the campaign name map.
+ */
+function resolveCampaignId(row, campaignNameMap, testName) {
+  const tier = (row.icp_tier || '').toLowerCase();
+  const variant = (row.abVariant || '').toUpperCase();
+
+  // For C/D campaigns, use their default test names if none provided
+  let effectiveTest = testName || '';
+  if (variant === 'C' && !effectiveTest) effectiveTest = 'nurture_v1';
+  if (variant === 'D' && !effectiveTest) effectiveTest = 'followup_v1';
+
+  const label = buildCampaignLabel(tier, variant, effectiveTest);
+  return { label, campaignId: campaignNameMap.get(label) || null };
+}
+
+async function pushLeadsToCampaign(campaignId, leads, log) {
+  // Instantly v2 API has no bulk endpoint — POST /leads accepts one lead at a time
+  const results = { pushed: 0, errors: 0, errorDetails: [] };
+  for (const lead of leads) {
+    const payload = {
       email: lead.email,
-      first_name: lead.first_name,
-      last_name: lead.last_name,
-      company_name: lead.company_name,
+      campaign_id: campaignId,
+      first_name: lead.first_name || '',
+      last_name: lead.last_name || '',
+      company_name: lead.company_name || '',
       assigned_sender: lead._assignedInbox || undefined,
       custom_variables: {
         icp_score: String(lead.icp_score || ''),
@@ -104,19 +131,19 @@ async function pushLeadsToCampaign(campaignId, leads) {
         personalized_subject: lead.personalized_subject || '',
         personalized_hook: lead.personalized_hook || lead.hook_text || '',
       },
-    }));
+    };
 
     try {
       await withRetry(async () => {
-        await instantlyFetch('POST', '/leads', {
-          campaign_id: campaignId,
-          leads: payload,
-        });
+        await instantlyFetch('POST', '/leads', payload);
       }, 2, [3000, 10000]);
-      results.pushed += chunk.length;
+      results.pushed += 1;
     } catch (err) {
-      console.error(`  Error pushing batch to campaign ${campaignId}: ${err.message}`);
-      results.errors += chunk.length;
+      log.error('Lead push failed', { campaignId, email: lead.email, error: err.message });
+      results.errors += 1;
+      if (results.errorDetails.length < 10) {
+        results.errorDetails.push(`${lead.email}: ${err.message}`);
+      }
     }
   }
   return results;
@@ -127,7 +154,6 @@ async function pushLeadsToCampaign(campaignId, leads) {
 // ---------------------------------------------------------------------------
 
 function assignInboxes(rows, inboxPool, isNurture) {
-  // Track send count per inbox for this batch
   const sendCounts = new Map();
   for (const inbox of inboxPool) {
     sendCounts.set(inbox, 0);
@@ -135,12 +161,10 @@ function assignInboxes(rows, inboxPool, isNurture) {
 
   for (const row of rows) {
     if (isNurture && row.assignedInbox) {
-      // Nurture: reuse the inbox from the first touch sequence
       row._assignedInbox = row.assignedInbox;
       const count = sendCounts.get(row.assignedInbox);
       if (count !== undefined) sendCounts.set(row.assignedInbox, count + 1);
     } else {
-      // First touch: assign inbox with lowest send count
       let minInbox = inboxPool[0];
       let minCount = sendCounts.get(minInbox) ?? 0;
       for (const inbox of inboxPool) {
@@ -159,11 +183,48 @@ function assignInboxes(rows, inboxPool, isNurture) {
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Push manifest — atomicity for CRM updates
 // ---------------------------------------------------------------------------
 
-async function main() {
-  // Parse CSV first to detect mode
+function writeManifest(manifestPath, rows, campaignMap) {
+  const manifest = {
+    createdAt: new Date().toISOString(),
+    leads: rows.filter(r => r.twentyId).map(r => ({
+      email: r.email,
+      twentyId: r.twentyId,
+      abVariant: r.abVariant,
+      assignedInbox: r._assignedInbox || '',
+    })),
+    campaignMap: Object.fromEntries(campaignMap),
+    crmUpdated: false,
+  };
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+  return manifest;
+}
+
+function markManifestComplete(manifestPath) {
+  if (!existsSync(manifestPath)) return;
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+  manifest.crmUpdated = true;
+  manifest.completedAt = new Date().toISOString();
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+}
+
+// ---------------------------------------------------------------------------
+// Main (exported for programmatic use)
+// ---------------------------------------------------------------------------
+
+export async function main(opts = {}) {
+  const csvPath = opts.csvPath || args.find((a) => !a.startsWith('-'));
+  const dryRun = opts.dryRun ?? hasFlag('--dry-run');
+  const log = opts.log || createLogger({ step: 'push' });
+  const manifestDir = opts.manifestDir || null;
+
+  if (!csvPath) {
+    throw new Error('CSV path is required');
+  }
+
+  // Parse CSV
   const fullPath = resolve(csvPath);
   const csvContent = readFileSync(fullPath, 'utf-8');
   const rows = parse(csvContent, { columns: true, skip_empty_lines: true, trim: true });
@@ -184,42 +245,63 @@ async function main() {
   console.log('═══════════════════════════════════════════════════════════');
 
   console.log(`\nReading: ${fullPath}`);
-  console.log(`  Loaded ${rows.length} leads`);
+  log.info('Batch loaded for push', { count: rows.length, mode: pushMode });
 
-  // Split by variant
-  const leadsA = rows.filter((r) => r.abVariant === 'A');
-  const leadsB = rows.filter((r) => r.abVariant === 'B');
-  const leadsC = rows.filter((r) => r.abVariant === 'C');
-  const leadsD = rows.filter((r) => r.abVariant === 'D');
+  // Check Instantly API key
+  if (!getEnv('INSTANTLY_API_KEY')) {
+    throw new Error('INSTANTLY_API_KEY must be set in .env');
+  }
 
-  // Validate campaign IDs based on mode
-  if (isSoftFollowup) {
-    if (!campaignD) {
-      console.error('Error: Campaign D ID required for soft follow-up. Set INSTANTLY_CAMPAIGN_D in .env or pass --campaign-d');
-      process.exit(1);
+  // Fetch campaign map from Instantly and resolve each lead's campaign
+  const campaignNameMap = await fetchCampaignMap(log);
+  const batchTestName = rows.find((r) => r.testName)?.testName || '';
+
+  // Group leads by resolved campaign
+  const leadsByCampaign = new Map(); // campaignId -> { label, leads[] }
+  const unresolved = [];
+
+  for (const row of rows) {
+    const { label, campaignId } = resolveCampaignId(row, campaignNameMap, batchTestName);
+    row._campaignLabel = label;
+    row._campaignId = campaignId;
+
+    if (!campaignId) {
+      unresolved.push({ email: row.email, tier: row.icp_tier, variant: row.abVariant, expectedName: label });
+    } else {
+      if (!leadsByCampaign.has(campaignId)) {
+        leadsByCampaign.set(campaignId, { label, leads: [] });
+      }
+      leadsByCampaign.get(campaignId).leads.push(row);
     }
-    console.log(`  Campaign D (soft follow-up): ${leadsD.length} leads -> Campaign ${campaignD}`);
-  } else if (isNurture) {
-    if (!campaignC) {
-      console.error('Error: Campaign C ID required for nurture. Set INSTANTLY_CAMPAIGN_C in .env or pass --campaign-c');
-      process.exit(1);
+  }
+
+  // Report routing
+  console.log(`\n  Campaign routing (${leadsByCampaign.size} campaigns):`);
+  for (const [cid, { label, leads }] of leadsByCampaign) {
+    console.log(`    ${label}: ${leads.length} leads -> ${cid.slice(0, 8)}...`);
+  }
+
+  if (unresolved.length > 0) {
+    console.log(`\n  WARNING: ${unresolved.length} leads could not be matched to a campaign:`);
+    const missing = [...new Set(unresolved.map((u) => u.expectedName))];
+    for (const name of missing) {
+      const count = unresolved.filter((u) => u.expectedName === name).length;
+      console.log(`    "${name}" — ${count} leads (campaign not found in Instantly)`);
     }
-    console.log(`  Campaign C (nurture): ${leadsC.length} leads -> Campaign ${campaignC}`);
-  } else {
-    if (!campaignA || !campaignB) {
-      console.error('Error: Campaign A/B IDs required. Set INSTANTLY_CAMPAIGN_A/B in .env or pass --campaign-a/--campaign-b');
-      process.exit(1);
+    log.warn('Unresolved campaign leads', { count: unresolved.length, missingCampaigns: missing });
+
+    if (unresolved.length === rows.length) {
+      throw new Error(`No leads matched any Instantly campaign. Expected names like: ${missing.slice(0, 3).join(', ')}`);
     }
-    console.log(`  Variant A: ${leadsA.length} leads -> Campaign ${campaignA}`);
-    console.log(`  Variant B: ${leadsB.length} leads -> Campaign ${campaignB}`);
   }
 
   // Inbox routing
   const inboxPool = getInboxPool();
+  const routableRows = rows.filter((r) => r._campaignId);
   let sendCounts;
   if (inboxPool.length > 0) {
     console.log(`\n  Inbox pool: ${inboxPool.length} inboxes`);
-    sendCounts = assignInboxes(rows, inboxPool, isNurture || isSoftFollowup);
+    sendCounts = assignInboxes(routableRows, inboxPool, isNurture || isSoftFollowup);
 
     console.log('  Inbox distribution:');
     for (const [inbox, count] of sendCounts) {
@@ -230,79 +312,65 @@ async function main() {
     console.log('\n  INSTANTLY_INBOXES not set — Instantly will auto-distribute across sender accounts');
   }
 
-  if (dryRun) {
+  // Shadow mode: INSTANTLY_ENABLED=false or INSTANTLY_SHADOW_MODE=true → dry run
+  const instantlyEnabled = getEnv('INSTANTLY_ENABLED', 'true').toLowerCase() !== 'false';
+  const shadowMode = getEnv('INSTANTLY_SHADOW_MODE', 'false').toLowerCase() === 'true';
+  const effectiveDryRun = dryRun || !instantlyEnabled || shadowMode;
+
+  if (!instantlyEnabled) {
+    console.log('\n  INSTANTLY_ENABLED=false — running in dry-run mode');
+  } else if (shadowMode) {
+    console.log('\n  INSTANTLY_SHADOW_MODE=true — running in shadow mode (no API calls)');
+  }
+
+  if (effectiveDryRun) {
     console.log('\n═══════════════════════════════════════════════════════════');
     console.log('  DRY RUN — No API calls made');
     console.log('═══════════════════════════════════════════════════════════');
-    if (isSoftFollowup) {
-      console.log(`  Would push ${leadsD.length} leads to Campaign D (soft follow-up)`);
-      const reused = leadsD.filter((r) => r.assignedInbox).length;
-      console.log(`  Inbox reuse (from prior sequence): ${reused}/${leadsD.length}`);
-    } else if (isNurture) {
-      console.log(`  Would push ${leadsC.length} leads to Campaign C (nurture)`);
-      const reused = leadsC.filter((r) => r.assignedInbox).length;
-      console.log(`  Inbox reuse (from first touch): ${reused}/${leadsC.length}`);
-    } else {
-      console.log(`  Would push ${leadsA.length} leads to Campaign A`);
-      console.log(`  Would push ${leadsB.length} leads to Campaign B`);
+    for (const [cid, { label, leads }] of leadsByCampaign) {
+      console.log(`  Would push ${leads.length} leads to "${label}" (${cid.slice(0, 8)}...)`);
     }
-    console.log(`  Would update ${rows.length} People in Twenty CRM`);
-    return;
+    console.log(`  Would update ${routableRows.length} People in Twenty CRM`);
+    return { metrics: { pushed: 0, errors: 0, crm_updated: 0, unresolved: unresolved.length } };
   }
 
-  // Check Instantly API key
-  if (!getEnv('INSTANTLY_API_KEY')) {
-    console.error('Error: INSTANTLY_API_KEY must be set in .env');
-    process.exit(1);
+  // Push to Instantly — one lead at a time (v2 has no bulk endpoint)
+  let totalPushed = 0;
+  let totalErrors = 0;
+  const pushedEmails = new Set(); // Track which leads were actually pushed
+
+  for (const [campaignId, { label, leads }] of leadsByCampaign) {
+    log.info(`Pushing to campaign "${label}"`, { campaignId, count: leads.length });
+    const result = await pushLeadsToCampaign(campaignId, leads, log);
+    log.info(`Campaign "${label}" pushed`, { pushed: result.pushed, errors: result.errors });
+    totalPushed += result.pushed;
+    totalErrors += result.errors;
+    // Mark successfully pushed leads
+    for (const lead of leads) {
+      // If total pushed for this campaign == leads.length, all went through
+      // Otherwise we can't be sure which ones failed without per-lead tracking
+      // For safety, only mark CRM as contacted if errors == 0 for the campaign
+      if (result.errors === 0) {
+        pushedEmails.add(lead.email);
+      }
+    }
   }
 
-  // Push to Instantly
-  const results = {};
-  if (isSoftFollowup) {
-    console.log('\n  Pushing to Instantly Campaign D (soft follow-up)...');
-    results.D = await pushLeadsToCampaign(campaignD, leadsD);
-    console.log(`  Campaign D: ${results.D.pushed} pushed, ${results.D.errors} errors`);
-  } else if (isNurture) {
-    console.log('\n  Pushing to Instantly Campaign C (nurture)...');
-    results.C = await pushLeadsToCampaign(campaignC, leadsC);
-    console.log(`  Campaign C: ${results.C.pushed} pushed, ${results.C.errors} errors`);
-  } else {
-    console.log('\n  Pushing to Instantly Campaign A...');
-    results.A = await pushLeadsToCampaign(campaignA, leadsA);
-    console.log(`  Campaign A: ${results.A.pushed} pushed, ${results.A.errors} errors`);
+  // Update Twenty CRM — only for leads that were successfully pushed
+  let crmUpdated = 0;
+  const campaignMap = new Map();
 
-    console.log('  Pushing to Instantly Campaign B...');
-    results.B = await pushLeadsToCampaign(campaignB, leadsB);
-    console.log(`  Campaign B: ${results.B.pushed} pushed, ${results.B.errors} errors`);
-  }
-
-  // Update Twenty CRM
-  if (hasTwentyConfig()) {
-    console.log('\n  Updating Twenty CRM...');
+  if (hasTwentyConfig() && pushedEmails.size > 0) {
     const now = new Date().toISOString();
     const inboundDomain = getEnv('GTM_INBOUND_DOMAIN', 'inbound.discloser.co');
-
-    function campaignIdForRow(r) {
-      if (r.abVariant === 'D') return campaignD;
-      if (r.abVariant === 'C') return campaignC;
-      return r.abVariant === 'A' ? campaignA : campaignB;
-    }
-
     const targetStage = isSoftFollowup ? 'contacted' : isNurture ? 'nurture' : 'contacted';
 
-    // Detect test name from CSV (all rows share the same test)
-    const batchTestName = rows.find((r) => r.testName)?.testName || '';
-
-    // Build campaign map: campaign ID -> set of labels
-    const campaignMap = new Map();
-
-    const updates = rows
-      .filter((r) => r.twentyId)
+    const updates = routableRows
+      .filter((r) => r.twentyId && pushedEmails.has(r.email))
       .map((r) => {
-        const label = buildCampaignLabel(r.icp_tier, r.abVariant, batchTestName);
-        const cid = campaignIdForRow(r);
+        const label = r._campaignLabel;
+        const cid = r._campaignId;
 
-        // Track for campaign map output
         if (!campaignMap.has(cid)) campaignMap.set(cid, new Set());
         campaignMap.get(cid).add(label);
 
@@ -316,56 +384,64 @@ async function main() {
           assignedInbox: r._assignedInbox || '',
           campaignLabel: label,
         };
-        // Set firstContactedAt only on first touch (don't overwrite on nurture/followup)
         if (!isNurture && !isSoftFollowup) {
           update.firstContactedAt = now;
         }
         if (batchTestName) {
           update.abTestName = batchTestName;
         }
-        // Only set replyToAddress on first touch, nurture reuses existing
         if (!isNurture) {
           update.replyToAddress = `disclosure-${crypto.randomUUID()}@${inboundDomain}`;
         }
         return update;
       });
 
+    // Write push manifest before CRM update
+    if (manifestDir) {
+      const manifestPath = join(manifestDir, 'push-manifest.json');
+      writeManifest(manifestPath, routableRows, campaignMap);
+    }
+
+    log.info('Updating Twenty CRM', { count: updates.length });
     const updateResult = await batchUpdate('people', updates);
-    console.log(`  Twenty updated: ${updateResult.updated}, Errors: ${updateResult.errors}`);
+    crmUpdated = updateResult.updated;
+    log.info('Twenty CRM updated', { updated: updateResult.updated, errors: updateResult.errors });
+
+    // Mark manifest as complete
+    if (manifestDir) {
+      markManifestComplete(join(manifestDir, 'push-manifest.json'));
+    }
   }
 
   // Print summary
   console.log('\n═══════════════════════════════════════════════════════════');
   console.log('  PUSH COMPLETE');
   console.log('═══════════════════════════════════════════════════════════');
-  if (isSoftFollowup) {
-    console.log(`  Instantly Campaign D (soft follow-up): ${results.D.pushed} contacts added`);
-    console.log(`\n  Twenty CRM updates:`);
-    console.log(`    funnelStage -> 'contacted': ${rows.filter((r) => r.twentyId).length}`);
-  } else if (isNurture) {
-    console.log(`  Instantly Campaign C (nurture): ${results.C.pushed} contacts added`);
-    console.log(`\n  Twenty CRM updates:`);
-    console.log(`    funnelStage -> 'nurture': ${rows.filter((r) => r.twentyId).length}`);
-  } else {
-    console.log(`  Instantly Campaign A: ${results.A.pushed} contacts added`);
-    console.log(`  Instantly Campaign B: ${results.B.pushed} contacts added`);
-    console.log(`\n  Twenty CRM updates:`);
-    console.log(`    funnelStage -> 'contacted': ${rows.filter((r) => r.twentyId).length}`);
-    console.log(`    abVariant set: ${rows.length} (A: ${leadsA.length}, B: ${leadsB.length})`);
-  }
-  console.log(`    lastOutreachDate set: ${rows.filter((r) => r.twentyId).length}`);
-  console.log(`    instantlyCampaignId set: ${rows.filter((r) => r.twentyId).length}`);
-  console.log(`    assignedInbox set: ${rows.filter((r) => r._assignedInbox).length}`);
-  const pushTestName = rows.find((r) => r.testName)?.testName;
-  if (pushTestName) {
-    console.log(`    abTestName: "${pushTestName}"`);
+
+  for (const [cid, labelSet] of campaignMap) {
+    const labels = [...labelSet].sort().join(', ');
+    const count = routableRows.filter((r) => r._campaignId === cid).length;
+    console.log(`  ${labels}: ${count} contacts added`);
   }
 
-  // Print campaign map — match Instantly campaign IDs to labels
+  console.log(`\n  Total pushed: ${totalPushed}, Errors: ${totalErrors}`);
+  if (unresolved.length > 0) {
+    console.log(`  Unresolved (skipped): ${unresolved.length}`);
+  }
+
+  console.log(`\n  Twenty CRM updates:`);
+  console.log(`    funnelStage -> '${isSoftFollowup ? 'contacted' : isNurture ? 'nurture' : 'contacted'}': ${routableRows.filter((r) => r.twentyId).length}`);
+  console.log(`    lastOutreachDate set: ${routableRows.filter((r) => r.twentyId).length}`);
+  console.log(`    instantlyCampaignId set: ${routableRows.filter((r) => r.twentyId).length}`);
+  console.log(`    assignedInbox set: ${routableRows.filter((r) => r._assignedInbox).length}`);
+  if (batchTestName) {
+    console.log(`    abTestName: "${batchTestName}"`);
+  }
+
   if (campaignMap && campaignMap.size > 0) {
-    console.log('\n  CAMPAIGN MAP (name your Instantly campaigns to match):');
+    console.log('\n  CAMPAIGN ROUTING MAP:');
     console.log('  ┌──────────────────────────────────────┬──────────────────────────────┐');
-    console.log('  │ Campaign ID                          │ Labels                       │');
+    console.log('  │ Campaign ID                          │ Name                         │');
     console.log('  ├──────────────────────────────────────┼──────────────────────────────┤');
     for (const [cid, labels] of campaignMap) {
       const labelStr = [...labels].sort().join(', ');
@@ -375,7 +451,7 @@ async function main() {
     console.log('  └──────────────────────────────────────┴──────────────────────────────┘');
   }
 
-  if (inboxPool.length > 0) {
+  if (inboxPool.length > 0 && sendCounts) {
     console.log('\n  INBOX UTILIZATION:');
     console.log('  ┌─────────────────────────┬───────┐');
     console.log('  │ Inbox                   │ Sends │');
@@ -385,9 +461,18 @@ async function main() {
     }
     console.log('  └─────────────────────────┴───────┘');
   }
+
+  const metrics = { pushed: totalPushed, errors: totalErrors, crm_updated: crmUpdated, unresolved: unresolved.length };
+  log.info('Push complete', metrics);
+
+  return { metrics };
 }
 
-main().catch((err) => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+// Only run when called directly from CLI
+const isDirectRun = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
+}

@@ -22,6 +22,15 @@ data/
 # Lead pool and batch output CSVs (contain PII)
 leads/
 scripts/output/
+scripts/3operational/
+
+# Pipeline run logs (contain run data, not code)
+scripts/logs/
+!scripts/logs/.gitkeep
+
+# Removed from repo — not pipeline code
+flowdrip/
+hub/
 
 # Skills CLI artifacts
 .agents/

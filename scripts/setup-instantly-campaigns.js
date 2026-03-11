@@ -126,52 +126,55 @@ function buildSchedule() {
 const SUBJECTS = {
   hot: {
     A: [
-      '{{firstName}}, quick question',
-      'Chat with your disclosures',
-      'Cost estimates in disclosures',
-      'Should I close your file?',
+      '{{firstName}}, tried ChatGPT on a disclosure packet?',
+      '{{firstName}}, ask your disclosure packet anything',
+      "Here's what that roof repair actually costs, {{firstName}}",
+      "{{firstName}}, almost missed what's on page 47",
     ],
     B: [
-      'Still using ChatGPT for this?',
-      'Between showings, {{firstName}}',
-      'Know what to negotiate',
-      'Not the right time?',
+      '{{firstName}}, still using ChatGPT for disclosures?',
+      '{{firstName}}, have your disclosures analyzed between showings',
+      "Here's what to negotiate from that inspection, {{firstName}}",
+      '{{firstName}}, one more thing about those repair costs',
     ],
   },
   high: {
     A: [
-      '{{firstName}}, disclosure reviews',
-      'Chat with your disclosures',
-      'Cost estimates in disclosures',
-      'Closing your file, {{firstName}}',
+      "{{firstName}}, here's what most agents miss in disclosures",
+      '{{firstName}}, what if you could question your disclosures?',
+      'Found repair estimates buried on page 34, {{firstName}}',
+      '{{firstName}}, ran the numbers on your next disclosure',
     ],
     B: [
-      'Still using ChatGPT for this?',
-      'Between showings',
-      'Walk in with numbers',
-      'Last note from me',
+      '{{firstName}}, ChatGPT missed this in your last disclosure',
+      '{{firstName}}, analyze your full packet between showings',
+      'Walk into that negotiation with real numbers, {{firstName}}',
+      "Here's what the inspection missed, {{firstName}}",
     ],
   },
   medium: {
     A: [
-      '{{firstName}}, a disclosure tool',
-      'Chat with your disclosures',
-      'Know what to negotiate',
-      'Should I stop emailing?',
+      '{{firstName}}, check page 47 of your next disclosure',
+      '{{firstName}}, your disclosures can answer questions now',
+      "Here's your negotiation leverage, {{firstName}}",
+      "{{firstName}}, here's what that foundation crack actually means",
     ],
     B: [
-      'ChatGPT enough for disclosures?',
-      'Between showings',
-      'Cost estimates in disclosures',
-      'Last note, {{firstName}}',
+      '{{firstName}}, ChatGPT quit after page 3',
+      '{{firstName}}, get your disclosures reviewed between showings',
+      "Here's what that repair should actually cost, {{firstName}}",
+      "{{firstName}}, here's an edge for your next negotiation",
     ],
   },
 };
 
+// Signature appended to every email
+const SIGNATURE = `\n—\n{{sender_name}}\nDiscloser | Smarter property disclosures\ndiscloser.co`;
+
 // Email bodies per tier — 4 emails for first touch
 const BODIES = {
   hot: [
-    // Email 1: The Hook — ChatGPT falls short, personalized with hookText
+    // Email 1: The Hook — personalized with hookText
     `Hi {{firstName}},
 
 {{hookText}}
@@ -180,22 +183,18 @@ Quick question — have you tried uploading disclosures to ChatGPT? It works for
 
 I built Discloser specifically for this. You upload the full packet — every document — and it keeps context across all of them. No rate limits, no lost threads.
 
-First property is free. Takes 2 minutes.
+First property is free. Takes 2 minutes.${SIGNATURE}`,
 
-discloser.co`,
-
-    // Email 2: Value Add — chat with docs, between showings
+    // Email 2: Value Add — chat with docs
     `Hi {{firstName}},
 
 Different angle on Discloser — after uploading a disclosure packet, you can chat with the documents. Ask anything about the property and get answers with inline citations, right back to the source page.
 
 Works well between showings. Compare what the seller disclosure says against the inspection report. Pull up a specific clause. Everything stays in context across all documents.
 
-Try it on a current deal. First property is free.
+Try it on a current deal. First property is free.${SIGNATURE}`,
 
-discloser.co`,
-
-    // Email 3: Cost estimates — impress clients
+    // Email 3: Cost estimates
     `Hi {{firstName}},
 
 One thing that surprises agents about Discloser — the analysis includes repair cost estimates for every finding.
@@ -204,40 +203,34 @@ Foundation crack mentioned on page 47? You'll see an estimated repair range. Roo
 
 Walk into a negotiation knowing what things actually cost. Your clients notice when you show up with numbers instead of guesses.
 
-Upload takes 2 minutes. First property is free.
-
-discloser.co`,
+Upload takes 2 minutes. First property is free.${SIGNATURE}`,
 
     // Email 4: Breakup
     `Hi {{firstName}},
 
-No worries if the timing's off. I'll leave the link below in case you have a deal where the disclosure packet is a monster.
+Last one from me. Next time you get a 200-page disclosure packet, run it through Discloser before the inspection.
 
-discloser.co — first property is always free.`,
+First property is free — discloser.co${SIGNATURE}`,
   ],
 
   high: [
-    // Email 1: The Hook — ChatGPT falls short, uses {{company}}
+    // Email 1: The Hook — uses {{company}}
     `Hi {{firstName}},
 
 Quick question — when you get a disclosure packet, do you upload it to ChatGPT? A lot of agents at {{company}} do. It works for a couple docs, but by the 3rd or 4th it starts losing context.
 
 Discloser was built for this. Upload the full packet at once — every document. It keeps context across all of them and flags what matters.
 
-First property is free. Takes 2 minutes.
+First property is free. Takes 2 minutes.${SIGNATURE}`,
 
-discloser.co`,
-
-    // Email 2: Value Add — chat with docs, between showings
+    // Email 2: Value Add — chat with docs
     `Hi {{firstName}},
 
 Different angle on Discloser — after uploading a disclosure packet, you can chat with the documents. Ask anything about the property and get answers with citations back to the source page.
 
 Works well between showings. Compare what the seller disclosure says against the inspection report. Pull up a specific clause. Everything stays in context across all documents.
 
-First property is free.
-
-discloser.co`,
+First property is free.${SIGNATURE}`,
 
     // Email 3: Cost estimates
     `Hi {{firstName}},
@@ -246,29 +239,25 @@ Discloser includes repair cost estimates for every finding in the analysis. Foun
 
 Walk into your next negotiation with actual numbers instead of guesses. Your clients notice when you show up prepared.
 
-Upload takes 2 minutes. First property is free.
-
-discloser.co`,
+Upload takes 2 minutes. First property is free.${SIGNATURE}`,
 
     // Email 4: Breakup
     `Hi {{firstName}},
 
-I'll stop reaching out. If disclosure reviews ever become a bottleneck, the link is below.
+Last note from me. When a disclosure packet hits your desk and you need answers fast, Discloser reads the full thing in two minutes.
 
-discloser.co — first property is always free.`,
+First property is free — discloser.co${SIGNATURE}`,
   ],
 
   medium: [
-    // Email 1: The Hook — ChatGPT falls short, universal
+    // Email 1: The Hook — universal
     `Hi {{firstName}},
 
 A lot of agents upload disclosure packets to ChatGPT. It works for a document or two, but by the 3rd or 4th it starts losing context and gives you generic summaries.
 
 I built Discloser specifically for disclosure reviews. Upload the entire packet at once. It reads every document, keeps context across all of them, and flags what your clients need to know.
 
-First property is free. Takes 2 minutes.
-
-discloser.co`,
+First property is free. Takes 2 minutes.${SIGNATURE}`,
 
     // Email 2: Value Add — chat with docs
     `Hi {{firstName}},
@@ -277,9 +266,7 @@ After uploading disclosures to Discloser, you can chat with the documents. Ask a
 
 Compare the seller disclosure against the inspection report. Pull up a specific clause between showings. Everything stays in context across the full packet.
 
-First property is free.
-
-discloser.co`,
+First property is free.${SIGNATURE}`,
 
     // Email 3: Cost estimates
     `Hi {{firstName}},
@@ -288,18 +275,27 @@ Discloser includes repair cost estimates for every finding. Foundation crack on 
 
 Walk into your next negotiation knowing what things cost. Clients notice when you come prepared with numbers instead of guesses.
 
-Upload takes 2 minutes. First property is free.
-
-discloser.co`,
+Upload takes 2 minutes. First property is free.${SIGNATURE}`,
 
     // Email 4: Breakup
     `Hi {{firstName}},
 
-No worries if this isn't a priority right now. Link is below if you ever need it.
+Last one from me. If a disclosure packet ever bogs down a deal, Discloser breaks it down in two minutes flat.
 
-discloser.co — first property is free.`,
+First property is free — discloser.co${SIGNATURE}`,
   ],
 };
+
+/**
+ * Convert plain text email body to HTML for Instantly.
+ * Double newlines become paragraph breaks, single newlines become <br>.
+ */
+function toHtml(text) {
+  return text
+    .split('\n\n')
+    .map((para) => `<p>${para.replace(/\n/g, '<br>')}</p>`)
+    .join('');
+}
 
 function firstTouchSequence(variant, tierName) {
   const t = tierName?.toLowerCase() || 'medium';
@@ -313,10 +309,10 @@ function firstTouchSequence(variant, tierName) {
   // 4-email drip: day 0, day 3, day 8, day 13
   return {
     steps: [
-      { type: 'email', delay: 0, variants: [{ subject: '{{personalized_subject}}', body: email1Body }] },
-      { type: 'email', delay: 3, variants: [{ subject: subjects[1], body: bodies[1] }] },
-      { type: 'email', delay: 5, variants: [{ subject: subjects[2], body: bodies[2] }] },
-      { type: 'email', delay: 5, variants: [{ subject: subjects[3], body: bodies[3] }] },
+      { type: 'email', delay: 0, variants: [{ subject: '{{personalized_subject}}', body: toHtml(email1Body) }] },
+      { type: 'email', delay: 3, variants: [{ subject: subjects[1], body: toHtml(bodies[1]) }] },
+      { type: 'email', delay: 5, variants: [{ subject: subjects[2], body: toHtml(bodies[2]) }] },
+      { type: 'email', delay: 5, variants: [{ subject: subjects[3], body: toHtml(bodies[3]) }] },
     ],
   };
 }
@@ -330,28 +326,26 @@ function nurtureSequence() {
         type: 'email',
         delay: 0,
         variants: [{
-          subject: 'A different angle, {{firstName}}',
-          body: `Hi {{firstName}},
+          subject: "{{firstName}}, here's what I sent a buyer before their showing",
+          body: toHtml(`Hi {{firstName}},
 
 Last time I mentioned Discloser for reviewing disclosure packets. Here's a different use — send the analysis to your buyer clients before the showing.
 
 They get a plain-English summary with every finding ranked by severity, repair cost estimates, and exactly what to ask about during the inspection. Sets the stage before they walk in.
 
-Upload takes 2 minutes. First property is still free.
-
-discloser.co`,
+Upload takes 2 minutes. First property is still free.${SIGNATURE}`),
         }],
       },
       {
         type: 'email',
         delay: 6,
         variants: [{
-          subject: 'Still relevant, {{firstName}}?',
-          body: `Hi {{firstName}},
+          subject: '{{firstName}}, broke down a 200-page packet in 2 minutes',
+          body: toHtml(`Hi {{firstName}},
 
-If disclosure reviews aren't a pain point for you, fair enough. Link is below if that changes.
+Either way — next time you're staring at a thick disclosure packet, give Discloser a shot. Two minutes, full breakdown, first property free.
 
-discloser.co`,
+discloser.co${SIGNATURE}`),
         }],
       },
     ],
@@ -366,14 +360,12 @@ function softFollowupSequence() {
         type: 'email',
         delay: 0,
         variants: [{
-          subject: 'Following up, {{firstName}}',
-          body: `Hi {{firstName}},
+          subject: '{{firstName}}, your free disclosure analysis is still here',
+          body: toHtml(`Hi {{firstName}},
 
 We connected a few weeks back about disclosure reviews. Wanted to check if the timing is better now.
 
-If you have a packet you'd like to run through Discloser, the offer still stands — first property is free.
-
-discloser.co`,
+If you have a packet you'd like to run through Discloser, the offer still stands — first property is free.${SIGNATURE}`),
         }],
       },
     ],

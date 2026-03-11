@@ -5,7 +5,9 @@ import { createHash } from 'crypto';
 import { config } from 'dotenv';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { BATCH_SIZE, RATE_LIMIT_PER_MIN, extractRegion, icpTier } from './constants.js';
+import { BATCH_SIZE, extractRegion, icpTier } from './constants.js';
+// Twenty cloud plan: 100 tokens/60s. Use 50 to stay well under the limit.
+const RATE_LIMIT_PER_MIN = 50;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: join(__dirname, '../../.env') });
@@ -79,27 +81,35 @@ export function hasTwentyConfig() {
 }
 
 export async function twentyFetch(method, path, body, timeoutMs = 30000) {
-  await waitForRateLimit();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const opts = {
-      method,
-      headers: {
-        Authorization: `Bearer ${getEnv('TWENTY_API_KEY')}`,
-        'Content-Type': 'application/json',
-      },
-      signal: controller.signal,
-    };
-    if (body && method !== 'GET') opts.body = JSON.stringify(body);
-    const response = await fetch(`${twentyBaseUrl()}${path}`, opts);
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Twenty API ${method} ${path} failed: ${response.status} ${text}`);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await waitForRateLimit();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const opts = {
+        method,
+        headers: {
+          Authorization: `Bearer ${getEnv('TWENTY_API_KEY')}`,
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+      };
+      if (body && method !== 'GET') opts.body = JSON.stringify(body);
+      const response = await fetch(`${twentyBaseUrl()}${path}`, opts);
+      if (response.status === 429 && attempt < 3) {
+        clearTimeout(timeout);
+        const wait = [15000, 30000, 60000][attempt];
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Twenty API ${method} ${path} failed: ${response.status} ${text}`);
+      }
+      return response.json();
+    } finally {
+      clearTimeout(timeout);
     }
-    return response.json();
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -107,18 +117,38 @@ export async function twentyFetch(method, path, body, timeoutMs = 30000) {
 // Pagination
 // ---------------------------------------------------------------------------
 
+/**
+ * Convert filter object to Twenty REST API query string format.
+ * Input:  { and: [{ funnelStage: { eq: 'scored' } }] }
+ * Output: 'funnelStage[eq]:scored'
+ * Supports multiple filters joined by comma.
+ */
+function buildFilterParam(filter) {
+  if (!filter || Object.keys(filter).length === 0) return '';
+  const conditions = filter.and || [filter];
+  const parts = [];
+  for (const cond of conditions) {
+    for (const [field, ops] of Object.entries(cond)) {
+      if (typeof ops === 'object' && ops !== null) {
+        for (const [op, value] of Object.entries(ops)) {
+          parts.push(`${field}[${op}]:${value}`);
+        }
+      }
+    }
+  }
+  return parts.length > 0 ? `&filter=${encodeURIComponent(parts.join(','))}` : '';
+}
+
 export async function paginateAll(objectName, filter = {}) {
   const allRecords = [];
   let cursor = null;
-  const filterParam = Object.keys(filter).length > 0
-    ? `&filter=${encodeURIComponent(JSON.stringify(filter))}`
-    : '';
+  const filterParam = buildFilterParam(filter);
 
   while (true) {
-    const cursorParam = cursor ? `&lastCursor=${encodeURIComponent(cursor)}` : '';
+    const cursorParam = cursor ? `&starting_after=${encodeURIComponent(cursor)}` : '';
     const result = await twentyFetch(
       'GET',
-      `/api/objects/${objectName}?limit=60${filterParam}${cursorParam}`
+      `/rest/${objectName}?limit=60${filterParam}${cursorParam}`
     );
     const records = result?.data?.[objectName] || result?.data || [];
     if (!Array.isArray(records) || records.length === 0) break;
@@ -171,14 +201,14 @@ export async function batchCreate(objectName, records) {
     const chunk = records.slice(i, i + BATCH_SIZE);
     try {
       await withRetry(async () => {
-        await twentyFetch('POST', `/api/objects/${objectName}/batch`, chunk);
+        await twentyFetch('POST', `/rest/${objectName}/batch`, chunk);
       }, 2, [3000, 10000]);
       results.created += chunk.length;
     } catch (error) {
       // Fall back to individual creates for the failed chunk
       for (const record of chunk) {
         try {
-          await twentyFetch('POST', `/api/objects/${objectName}`, record);
+          await twentyFetch('POST', `/rest/${objectName}`, record);
           results.created += 1;
         } catch (err) {
           results.errors += 1;
@@ -198,14 +228,14 @@ export async function batchUpdate(objectName, updates) {
     const chunk = updates.slice(i, i + BATCH_SIZE);
     try {
       await withRetry(async () => {
-        await twentyFetch('PATCH', `/api/objects/${objectName}/batch`, chunk);
+        await twentyFetch('PATCH', `/rest/${objectName}/batch`, chunk);
       }, 2, [3000, 10000]);
       results.updated += chunk.length;
     } catch (error) {
       // Fall back to individual updates
       for (const update of chunk) {
         try {
-          await twentyFetch('PATCH', `/api/objects/${objectName}/${update.id}`, update);
+          await twentyFetch('PATCH', `/rest/${objectName}/${update.id}`, update);
           results.updated += 1;
         } catch (err) {
           results.errors += 1;
@@ -228,10 +258,9 @@ export async function upsertCompany(name, domain, companyMap) {
   if (companyMap.has(key)) return companyMap.get(key);
 
   // Try to find existing
-  const filter = { and: [{ name: { ilike: `%${name}%` } }] };
-  const encoded = encodeURIComponent(JSON.stringify(filter));
+  const filterStr = encodeURIComponent(`name[ilike]:%${name}%`);
   try {
-    const result = await twentyFetch('GET', `/api/objects/companies?filter=${encoded}&limit=1`);
+    const result = await twentyFetch('GET', `/rest/companies?filter=${filterStr}&limit=1`);
     const records = result?.data?.companies || result?.data || [];
     if (Array.isArray(records) && records.length > 0) {
       companyMap.set(key, records[0].id);
@@ -247,8 +276,8 @@ export async function upsertCompany(name, domain, companyMap) {
     domainName: { primaryLinkUrl: domain || '' },
   };
   try {
-    const created = await twentyFetch('POST', '/api/objects/companies', body);
-    const id = created?.data?.id || created?.id || null;
+    const created = await twentyFetch('POST', '/rest/companies', body);
+    const id = created?.data?.createCompany?.id || created?.data?.id || created?.id || null;
     if (id) companyMap.set(key, id);
     return id;
   } catch (err) {
@@ -275,6 +304,7 @@ export function contactToTwentyPerson(contact, companyId = null) {
       primaryEmail: email,
     },
     jobTitle: contact.job_title || contact['Job Title'] || '',
+    city: rawLocation.split(',')[0]?.trim() || '',
     linkedinLink: { primaryLinkUrl: linkedinUrl, primaryLinkLabel: 'LinkedIn' },
     // Existing custom fields
     icpScore: toInt(contact.icp_score),
@@ -291,8 +321,8 @@ export function contactToTwentyPerson(contact, companyId = null) {
     igDaysSincePost: toInt(contact.ig_days_since_post, 999),
     igRecentAddresses: (contact.ig_recent_addresses || contact.igRecentAddresses || '').substring(0, 500),
     igNeighborhoods: (contact.ig_neighborhoods || contact.igNeighborhoods || '').substring(0, 255),
-    igListingPostsCount: toInt(contact.ig_listing_posts || contact.igListingPostsCount),
-    igSoldPostsCount: toInt(contact.ig_sold_posts || contact.igSoldPostsCount),
+    igListingPostsCount: toInt(contact.ig_listing_posts_count || contact.ig_listing_posts || contact.igListingPostsCount),
+    igSoldPostsCount: toInt(contact.ig_sold_posts_count || contact.ig_sold_posts || contact.igSoldPostsCount),
     externalLeadId: contact.external_lead_id || '',
     leadSource: contact.source_primary || contact.leadSource || 'Clay',
     // New fields (8)
@@ -325,10 +355,8 @@ export function contactToTwentyPerson(contact, companyId = null) {
 // ---------------------------------------------------------------------------
 
 export async function findPersonByEmail(email) {
-  const encoded = encodeURIComponent(
-    JSON.stringify({ and: [{ emails: { primaryEmail: { eq: email } } }] })
-  );
-  const result = await twentyFetch('GET', `/api/objects/people?filter=${encoded}&limit=1`);
+  const encoded = encodeURIComponent(`emails.primaryEmail[eq]:${email}`);
+  const result = await twentyFetch('GET', `/rest/people?filter=${encoded}&limit=1`);
   const records = result?.data?.people || result?.data || [];
   return Array.isArray(records) && records.length > 0 ? records[0] : null;
 }

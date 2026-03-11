@@ -191,35 +191,49 @@ async function enrichLinkedIn(client, leads) {
 
   log(`Found ${validLeads.length} valid LinkedIn URLs`);
 
-  const urls = validLeads.map(l => l['LinkedIn Profile']);
+  const profileUrls = validLeads.map(l => l['LinkedIn Profile']);
 
   const run = await client.actor(LINKEDIN_ACTOR).call(
-    { urls, maxPosts: 5 },
-    { waitForFinish: 300 }
+    { profileUrls, maxPosts: 5 },
+    { waitSecs: 300 }
   );
 
   const { items } = await client.dataset(run.defaultDatasetId).listItems();
   log(`LinkedIn scrape status: ${run.status}`);
-  log(`LinkedIn results: ${items.length} profiles returned`);
+  log(`LinkedIn results: ${items.length} posts returned`);
 
-  const resultsByUrl = {};
+  // Items are individual posts — group by author profile
+  const profilesByUsername = {};
   for (const item of items) {
-    const url = item.profileUrl || item.url;
-    if (url) resultsByUrl[url.toLowerCase()] = item;
+    const username = (item.author?.publicIdentifier || extractLinkedInUsername(item.author?.linkedinUrl) || '').toLowerCase();
+    if (!username) continue;
+    if (!profilesByUsername[username]) {
+      profilesByUsername[username] = {
+        headline: item.author?.info || '',
+        posts: [],
+      };
+    }
+    profilesByUsername[username].posts.push({
+      text: item.content || '',
+      date: item.postedAt?.date || '',
+      likes: item.engagement?.likes || 0,
+      comments: item.engagement?.comments || 0,
+    });
   }
 
-  return leads.map(lead => {
-    const url = (lead['LinkedIn Profile'] || '').toLowerCase();
-    const result = resultsByUrl[url];
+  log(`LinkedIn profiles matched: ${Object.keys(profilesByUsername).length}`);
 
-    if (result) {
-      const posts = result.posts || [];
-      const headline = result.author?.info || result.headline || '';
+  return leads.map(lead => {
+    const username = (extractLinkedInUsername(lead['LinkedIn Profile']) || '').toLowerCase();
+    const profile = profilesByUsername[username];
+
+    if (profile) {
+      const posts = profile.posts;
       const recentTopic = classifyLinkedInTopic(posts[0]?.text || '');
 
       return {
         ...lead,
-        linkedin_headline: headline,
+        linkedin_headline: profile.headline,
         linkedin_posts_count: posts.length,
         linkedin_recent_topic: recentTopic,
         linkedin_last_post_date: posts[0]?.date || '',
@@ -279,7 +293,7 @@ async function enrichInstagram(client, leads) {
 
   const run = await client.actor(INSTAGRAM_ACTOR).call(
     { usernames, resultsLimit: 10 },
-    { waitForFinish: 600 }
+    { waitSecs: 600 }
   );
 
   const { items } = await client.dataset(run.defaultDatasetId).listItems();
@@ -288,7 +302,8 @@ async function enrichInstagram(client, leads) {
 
   const postsByUsername = {};
   for (const post of items) {
-    const username = (post.ownerUsername || '').toLowerCase();
+    const username = (post.scraped_username || post.user?.username || post.ownerUsername || '').toLowerCase();
+    if (!username) continue;
     if (!postsByUsername[username]) postsByUsername[username] = [];
     postsByUsername[username].push(post);
   }
@@ -302,20 +317,24 @@ async function enrichInstagram(client, leads) {
       const soldPosts = posts.filter(p => isSoldPost(p));
       const addresses = extractAddresses(posts);
       const neighborhoods = extractNeighborhoods(posts);
-      const mostRecent = posts.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0];
+      // Handle both timestamp formats: ISO string or Unix epoch (taken_at)
+      const getPostDate = (p) => p.timestamp || (p.taken_at ? new Date(p.taken_at * 1000).toISOString() : '');
+      const mostRecent = posts.sort((a, b) => new Date(getPostDate(b)) - new Date(getPostDate(a)))[0];
+      const mostRecentDate = getPostDate(mostRecent);
+      const followers = posts[0]?.user?.follower_count || posts[0]?.ownerFollowerCount || 0;
 
       return {
         ...lead,
         ig_username: username,
-        ig_followers: posts[0]?.ownerFollowerCount || 0,
+        ig_followers: followers,
         ig_posts_fetched: posts.length,
         ig_listing_posts_count: listingPosts.length,
         ig_sold_posts_count: soldPosts.length,
         ig_recent_addresses: addresses.join(' | '),
         ig_neighborhoods: neighborhoods.join(', '),
-        ig_last_post_date: mostRecent?.timestamp || '',
-        ig_days_since_post: calculateDaysSince(mostRecent?.timestamp),
-        ig_days_since_listing: listingPosts[0] ? calculateDaysSince(listingPosts[0].timestamp) : 999,
+        ig_last_post_date: mostRecentDate,
+        ig_days_since_post: calculateDaysSince(mostRecentDate),
+        ig_days_since_listing: listingPosts[0] ? calculateDaysSince(getPostDate(listingPosts[0])) : 999,
         ig_enriched: 'Yes',
         ig_enriched_at: new Date().toISOString(),
       };
@@ -328,13 +347,19 @@ async function enrichInstagram(client, leads) {
   });
 }
 
+function getCaptionText(post) {
+  if (!post.caption) return '';
+  if (typeof post.caption === 'string') return post.caption;
+  return post.caption.text || '';
+}
+
 function isListingPost(post) {
-  const text = (post.caption || '').toLowerCase();
+  const text = getCaptionText(post).toLowerCase();
   return /just listed|new listing|for sale|open house|coming soon|price reduced/i.test(text);
 }
 
 function isSoldPost(post) {
-  const text = (post.caption || '').toLowerCase();
+  const text = getCaptionText(post).toLowerCase();
   return /sold|closed|congrat|happy buyer|happy seller|keys|pending|under contract/i.test(text);
 }
 
@@ -343,7 +368,7 @@ function extractAddresses(posts) {
   const pattern = /(\d{1,5}\s+[A-Za-z]+(?:\s+[A-Za-z]+)?\s+(?:Street|St|Avenue|Ave|Boulevard|Blvd|Road|Rd|Drive|Dr|Lane|Ln|Way|Court|Ct|Place|Pl))/gi;
 
   for (const post of posts) {
-    const text = post.caption || '';
+    const text = getCaptionText(post);
     const matches = text.match(pattern) || [];
     addresses.push(...matches.map(a => a.trim()));
   }
@@ -363,7 +388,7 @@ function extractNeighborhoods(posts) {
 
   const found = new Set();
   for (const post of posts) {
-    const text = `${post.caption || ''} ${post.locationName || ''}`.toLowerCase();
+    const text = `${getCaptionText(post)} ${post.locationName || post.location?.name || ''}`.toLowerCase();
     for (const hood of sfNeighborhoods) {
       if (text.includes(hood.toLowerCase())) {
         found.add(hood);

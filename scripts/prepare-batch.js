@@ -11,7 +11,7 @@
  */
 
 import { writeFileSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { stringify } from 'csv-stringify/sync';
 import {
@@ -25,11 +25,12 @@ import {
   SUPPRESSED_STAGES, COOLDOWN_DAYS, SEQUENCE_DURATION_DAYS,
   icpTier, rampBatchLimit, isReEngageEligible,
 } from './lib/constants.js';
+import { createLogger } from './lib/logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
-// CLI
+// CLI helpers (used when running directly)
 // ---------------------------------------------------------------------------
 
 const args = process.argv.slice(2);
@@ -41,42 +42,21 @@ function hasFlag(flag) {
   return args.includes(flag);
 }
 
-const region = getArg('--region');
-const mode = getArg('--mode') || 'first_touch'; // 'first_touch', 'nurture', or 'soft_followup'
-const testName = getArg('--test'); // e.g. "subject_line_v2", "value_prop_test"
-const minScore = toInt(getArg('--min-score'), mode === 'first_touch' ? 50 : 0);
-const tierFilter = getArg('--tier') ? getArg('--tier').split(',').map((t) => t.trim().toLowerCase()) : null;
-const campaignStart = getArg('--campaign-start'); // ISO date, e.g. "2026-03-10"
-const explicitLimit = getArg('--limit');
-const limit = explicitLimit ? toInt(explicitLimit) : rampBatchLimit(campaignStart);
-const dryRun = hasFlag('--dry-run');
-
-if (!region) {
-  console.error('Usage: node scripts/prepare-batch.js --region "SF Bay" --min-score 50 [--test subject_line_v2] [--mode nurture] [--tier hot,high] [--limit 500] [--campaign-start 2026-03-10] [--dry-run]');
-  process.exit(1);
-}
-if (!['first_touch', 'nurture', 'soft_followup'].includes(mode)) {
-  console.error('Error: --mode must be "first_touch", "nurture", or "soft_followup"');
-  process.exit(1);
-}
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
 // ---------------------------------------------------------------------------
 // Mode-specific queries
 // ---------------------------------------------------------------------------
 
-async function prepareFirstTouchBatch() {
-  console.log('\n  Querying Twenty for scored contacts...');
+async function prepareFirstTouchBatch(region, minScore, tierFilter, testName, log) {
+  log.info('Querying Twenty for scored contacts');
   const filter = { and: [{ funnelStage: { eq: 'scored' } }] };
   const allPeople = await paginateAll('people', filter);
-  console.log(`  Found ${allPeople.length} contacts with funnelStage='scored'`);
+  log.info('Scored contacts found', { count: allPeople.length });
 
   let candidates = allPeople.filter((p) => {
-    const pRegion = p.region || '';
-    if (pRegion !== region) return false;
+    if (region) {
+      const pRegion = p.region || '';
+      if (pRegion !== region) return false;
+    }
     const score = toInt(p.icpScore);
     if (score < minScore) return false;
     if (tierFilter) {
@@ -85,7 +65,7 @@ async function prepareFirstTouchBatch() {
     }
     return true;
   });
-  console.log(`  After region/score/tier filter: ${candidates.length}`);
+  log.info('After region/score/tier filter', { count: candidates.length });
 
   let suppressedCount = 0;
   let testDupCount = 0;
@@ -112,60 +92,74 @@ async function prepareFirstTouchBatch() {
     }
     return true;
   });
-  console.log(`  Suppressed: ${suppressedCount}`);
-  if (testDupCount > 0) console.log(`  Already in test "${testName}": ${testDupCount}`);
-  console.log(`  Eligible: ${candidates.length}`);
+  log.info('Suppression applied', { suppressed: suppressedCount, testDups: testDupCount, eligible: candidates.length });
 
   return { candidates, suppressedCount };
 }
 
-async function prepareNurtureBatch() {
-  // Nurture mode: find opened_no_reply contacts past their cooldown
-  console.log('\n  Querying Twenty for opened-no-reply contacts (nurture candidates)...');
+async function prepareNurtureBatch(region, log) {
+  log.info('Querying Twenty for opened-no-reply contacts (nurture candidates)');
   const filter = { and: [{ funnelStage: { eq: 'opened_no_reply' } }] };
   const allPeople = await paginateAll('people', filter);
-  console.log(`  Found ${allPeople.length} contacts with funnelStage='opened_no_reply'`);
+  log.info('Opened-no-reply contacts found', { count: allPeople.length });
 
-  // Filter: must be past the 14-21 day cooldown and in the right region
   const candidates = allPeople.filter((p) => {
-    const pRegion = p.region || '';
-    if (pRegion !== region) return false;
-    // Check cooldown: lastOutreachDate must be >14 days ago
+    if (region) {
+      const pRegion = p.region || '';
+      if (pRegion !== region) return false;
+    }
     if (!isReEngageEligible('opened_no_reply', p.lastOutreachDate, toInt(p.reEngageAttempts))) {
       return false;
     }
     return true;
   });
-  console.log(`  Past cooldown + in region: ${candidates.length}`);
+  log.info('Past cooldown + in region', { count: candidates.length });
 
   return candidates;
 }
 
-async function prepareSoftFollowupBatch() {
-  // Campaign D: find replied_went_cold contacts past their cooldown
-  console.log('\n  Querying Twenty for replied-went-cold contacts (Campaign D candidates)...');
+async function prepareSoftFollowupBatch(region, log) {
+  log.info('Querying Twenty for replied-went-cold contacts (Campaign D candidates)');
   const filter = { and: [{ funnelStage: { eq: 'replied_went_cold' } }] };
   const allPeople = await paginateAll('people', filter);
-  console.log(`  Found ${allPeople.length} contacts with funnelStage='replied_went_cold'`);
+  log.info('Replied-went-cold contacts found', { count: allPeople.length });
 
   const candidates = allPeople.filter((p) => {
-    const pRegion = p.region || '';
-    if (pRegion !== region) return false;
+    if (region) {
+      const pRegion = p.region || '';
+      if (pRegion !== region) return false;
+    }
     if (!isReEngageEligible('replied_went_cold', p.lastOutreachDate, toInt(p.reEngageAttempts))) {
       return false;
     }
     return true;
   });
-  console.log(`  Past cooldown + in region: ${candidates.length}`);
+  log.info('Past cooldown + in region', { count: candidates.length });
 
   return candidates;
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Main (exported for programmatic use)
 // ---------------------------------------------------------------------------
 
-async function main() {
+export async function main(opts = {}) {
+  const region = opts.region || getArg('--region');
+  const mode = opts.mode || getArg('--mode') || 'first_touch';
+  const testName = opts.testName || getArg('--test');
+  const minScore = opts.minScore ?? toInt(getArg('--min-score'), mode === 'first_touch' ? 50 : 0);
+  const tierFilter = opts.tierFilter || (getArg('--tier') ? getArg('--tier').split(',').map((t) => t.trim().toLowerCase()) : null);
+  const campaignStart = opts.campaignStart || getArg('--campaign-start');
+  const explicitLimit = opts.limit != null ? String(opts.limit) : getArg('--limit');
+  const limit = explicitLimit ? toInt(explicitLimit) : rampBatchLimit(campaignStart);
+  const dryRun = opts.dryRun ?? hasFlag('--dry-run');
+  const log = opts.log || createLogger({ step: 'prepare' });
+
+  // Region is optional — when omitted, all regions are included
+  if (!['first_touch', 'nurture', 'soft_followup'].includes(mode)) {
+    throw new Error('--mode must be "first_touch", "nurture", or "soft_followup"');
+  }
+
   const modeLabels = {
     first_touch: 'FIRST TOUCH (A/B)',
     nurture: 'NURTURE (Campaign C)',
@@ -176,20 +170,18 @@ async function main() {
   console.log('═══════════════════════════════════════════════════════════');
 
   if (!hasTwentyConfig()) {
-    console.error('Error: TWENTY_BASE_URL and TWENTY_API_KEY must be set in .env');
-    process.exit(1);
+    throw new Error('TWENTY_BASE_URL and TWENTY_API_KEY must be set in .env');
   }
 
   let candidates;
   let suppressedCount = 0;
-  const now = Date.now();
 
   if (mode === 'nurture') {
-    candidates = await prepareNurtureBatch();
+    candidates = await prepareNurtureBatch(region, log);
   } else if (mode === 'soft_followup') {
-    candidates = await prepareSoftFollowupBatch();
+    candidates = await prepareSoftFollowupBatch(region, log);
   } else {
-    const result = await prepareFirstTouchBatch();
+    const result = await prepareFirstTouchBatch(region, minScore, tierFilter, testName, log);
     candidates = result.candidates;
     suppressedCount = result.suppressedCount;
   }
@@ -200,12 +192,12 @@ async function main() {
   // Apply limit
   if (limit > 0 && candidates.length > limit) {
     candidates = candidates.slice(0, limit);
-    console.log(`  Limited to: ${candidates.length}`);
+    log.info('Batch limited', { limit, count: candidates.length });
   }
 
   if (candidates.length === 0) {
     console.log('\n  No contacts eligible for this batch. Exiting.');
-    return;
+    return { csvPath: null, metrics: { candidates: 0, suppressed: suppressedCount, queued: 0 } };
   }
 
   // Tier breakdown
@@ -219,17 +211,14 @@ async function main() {
   let variantB = 0;
 
   if (mode === 'nurture') {
-    // Nurture mode: no A/B split, all go to Campaign C
     for (const p of candidates) {
       p._abVariant = 'C';
     }
   } else if (mode === 'soft_followup') {
-    // Campaign D: single email, all go to variant D
     for (const p of candidates) {
       p._abVariant = 'D';
     }
   } else {
-    // First touch: A/B assignment via deterministic hash
     const salt = new Date().toISOString().slice(0, 10);
     for (const p of candidates) {
       const email = p.emails?.primaryEmail || '';
@@ -262,7 +251,7 @@ async function main() {
     ig_sold_posts: toInt(p.igSoldPostsCount),
     region: p.region || '',
     abVariant: p._abVariant,
-    assignedInbox: p.assignedInbox || '', // carry forward for nurture inbox reuse
+    assignedInbox: p.assignedInbox || '',
     mode,
     testName: testName || '',
     twentyId: p.id,
@@ -270,7 +259,7 @@ async function main() {
 
   // Write CSV
   const date = new Date().toISOString().slice(0, 10);
-  const regionSlug = region.toLowerCase().replace(/\s+/g, '_');
+  const regionSlug = region ? region.toLowerCase().replace(/\s+/g, '_') : 'all_regions';
   const modeSlugs = { first_touch: 'batch', nurture: 'nurture', soft_followup: 'followup' };
   const modeSlug = modeSlugs[mode] || 'batch';
   const testSlug = testName ? `_${testName.replace(/\s+/g, '_')}` : '';
@@ -283,7 +272,7 @@ async function main() {
   if (!dryRun) {
     const targetStages = { first_touch: 'queued', nurture: 'nurture', soft_followup: 'queued' };
     const targetStage = targetStages[mode] || 'queued';
-    console.log(`\n  Updating Twenty CRM — marking contacts as '${targetStage}'...`);
+    log.info('Updating Twenty CRM', { targetStage, count: candidates.length });
     const updates = candidates.map((p) => {
       const update = {
         id: p.id,
@@ -292,7 +281,6 @@ async function main() {
       };
       if (testName) {
         update.abTestName = testName;
-        // Append to history (comma-separated list of all tests this contact has been in)
         const existing = (p.abTestHistory || '').split(',').map((s) => s.trim()).filter(Boolean);
         if (!existing.includes(testName)) existing.push(testName);
         update.abTestHistory = existing.join(',');
@@ -300,7 +288,7 @@ async function main() {
       return update;
     });
     const result = await batchUpdate('people', updates);
-    console.log(`  Updated: ${result.updated}, Errors: ${result.errors}`);
+    log.info('Twenty CRM updated', { updated: result.updated, errors: result.errors });
   }
 
   // Print summary
@@ -333,9 +321,25 @@ async function main() {
     console.log(`  Twenty CRM updated: ${candidates.length} People -> funnelStage: '${summaryStages[mode] || 'queued'}'`);
   }
   console.log(`  CSV written to: ${csvPath}`);
+
+  const metrics = {
+    candidates: candidates.length + suppressedCount,
+    suppressed: suppressedCount,
+    queued: candidates.length,
+    variantA,
+    variantB,
+    tierBreakdown,
+  };
+  log.info('Batch prepared', metrics);
+
+  return { csvPath, metrics };
 }
 
-main().catch((err) => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+// Only run when called directly from CLI
+const isDirectRun = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
+}

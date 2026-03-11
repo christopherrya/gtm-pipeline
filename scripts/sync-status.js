@@ -25,6 +25,7 @@ import {
   RE_ENGAGE_RULES,
   isReEngageEligible,
 } from './lib/constants.js';
+import { createLogger } from './lib/logger.js';
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -38,6 +39,7 @@ function hasFlag(flag) {
 const runOnce = hasFlag('--once');
 const verbose = hasFlag('--verbose');
 const POLL_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+const log = createLogger({ step: 'sync' });
 
 // ---------------------------------------------------------------------------
 // Instantly v2 API client
@@ -119,10 +121,10 @@ async function syncOnce() {
     ],
   };
   const people = await paginateAll('people', filter);
-  console.log(`  Found ${people.length} contacts linked to Instantly campaigns`);
+  log.info('Contacts linked to Instantly loaded', { count: people.length });
 
   if (people.length === 0) {
-    console.log('  No contacts to sync.');
+    log.info('No contacts to sync');
     return;
   }
 
@@ -198,7 +200,7 @@ async function syncOnce() {
     }
   }
 
-  console.log(`\n  Status changes detected: ${changesDetected}`);
+  log.info('Status changes detected', { count: changesDetected });
 
   // Detect sequence completions — contacts where the sequence has finished
   const sequenceUpdates = detectSequenceCompletions(people);
@@ -225,9 +227,9 @@ async function syncOnce() {
   // Strip internal tracking fields before sending to API
   const cleanUpdates = updates.map(({ _email, _fromStage, ...rest }) => rest);
   if (cleanUpdates.length > 0) {
-    console.log(`  Applying ${cleanUpdates.length} updates to Twenty CRM...`);
+    log.info('Applying CRM updates', { count: cleanUpdates.length });
     const result = await batchUpdate('people', cleanUpdates);
-    console.log(`  Updated: ${result.updated}, Errors: ${result.errors}`);
+    log.info('CRM updates applied', { updated: result.updated, errors: result.errors });
   }
 
   // Print funnel report
@@ -442,7 +444,7 @@ async function main() {
     try {
       await syncOnce();
     } catch (err) {
-      console.error(`  Sync error: ${err.message}`);
+      log.error('Sync error', { error: err.message });
     }
     console.log(`\n  Next sync in ${POLL_INTERVAL_MS / 60000} minutes...`);
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));

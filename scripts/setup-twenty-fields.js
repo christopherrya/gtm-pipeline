@@ -20,7 +20,7 @@ const dryRun = process.argv.includes('--dry-run');
 
 const PEOPLE_OBJECT_METADATA_ID = getEnv(
   'TWENTY_PEOPLE_METADATA_ID',
-  '1b8108be-5895-497e-832a-1c8101a06040',
+  '93add812-8163-4b64-ac04-e75a4a86b7b9',
 );
 
 // ---------------------------------------------------------------------------

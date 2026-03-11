@@ -28,7 +28,13 @@
     "batch:followup": "node scripts/prepare-batch.js --mode soft_followup",
     "batch:personalize": "node scripts/personalize-batch.js",
     "batch:push": "node scripts/push-to-instantly.js",
-    "batch:sync": "node scripts/sync-status.js"
+    "batch:sync": "node scripts/sync-status.js",
+    "pipeline:run": "node scripts/run-pipeline.js",
+    "pipeline:approve": "node scripts/run-pipeline.js --approve",
+    "sync:once": "node scripts/sync-status.js --once",
+    "launchd:install": "node scripts/install-launchd.js",
+    "launchd:uninstall": "node scripts/install-launchd.js --uninstall",
+    "launchd:status": "node scripts/install-launchd.js --status"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
@@ -37,6 +43,7 @@
     "csv-stringify": "^6.4.0",
     "dotenv": "^16.3.1",
     "node-fetch": "^3.3.2",
+    "nodemailer": "^8.0.1",
     "puppeteer": "^22.0.0",
     "string-similarity": "^4.0.4"
   }

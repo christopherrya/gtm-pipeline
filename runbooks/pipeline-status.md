@@ -1,8 +1,8 @@
 # Mass Email Pipeline — Status & Handoff Guide
 
-**Last updated:** 2026-03-05
+**Last updated:** 2026-03-10
 **Branch:** `feature/email-drip-campaign`
-**Status:** Infrastructure complete. Ready for data loading and first batch.
+**Status:** Live. First batch sent (345 San Diego leads). Automated weekly pipeline active.
 
 ---
 
@@ -18,7 +18,9 @@ Every script in the pipeline is implemented and working. The pipeline takes real
 | `scripts/lib/twenty-client.js` | — | Twenty CRM API client with rate limiting, pagination, batch ops | Done |
 | `scripts/setup-twenty-fields.js` | `npm run setup:fields` | Create 31 custom fields on Twenty People object | Done — 31 fields confirmed |
 | `scripts/setup-instantly-campaigns.js` | `npm run setup:campaigns` | Create Instantly campaigns with full email sequences | Done — 8 campaigns created as drafts |
-| `scripts/select-from-pool.js` | `npm run pool:select` | Select leads from `leads/pool/` CSVs by region/tier, dedup against CRM | Done |
+| `scripts/select-from-pool.js` | `npm run pool:select` | Select leads from `~/Desktop/Discloser_Leads/` by tier, dedup against CRM | Done |
+| `scripts/run-pipeline.js` | `npm run pipeline` | Full pipeline runner: select → enrich → import → prepare → personalize → push | Done |
+| `scripts/install-launchd.js` | — | Install macOS launchd plists for automated scheduling | Done |
 | `scripts/bulk-import-twenty.js` | `npm run import` | Batch import contacts + companies to Twenty CRM | Done |
 | `scripts/prepare-batch.js` | `npm run batch:prepare` | Query Twenty for scored leads, assign A/B, output Instantly-ready CSV | Done |
 | `scripts/push-to-instantly.js` | `npm run batch:push` | Push CSV to Instantly campaigns, write back campaign IDs to Twenty | Done |
@@ -37,11 +39,115 @@ Every script in the pipeline is implemented and working. The pipeline takes real
 
 | System | Status | Details |
 |--------|--------|---------|
-| Twenty CRM | Running | Mac Mini @ `http://100.126.152.109:3000` via Tailscale |
-| Twenty People fields | 31 confirmed | 15 original + 12 pipeline + 4 event timestamps |
+| Twenty CRM | Running | Cloud @ `https://discloser.twenty.com` (Twenty hosted) |
+| Twenty People fields | 35 confirmed | 15 original + 12 pipeline + 4 IG enrichment + 4 event timestamps |
 | Instantly API | Working | v2 API, Bearer auth with `INSTANTLY_DISCLOSER_API_KEY` |
 | Instantly inboxes | 6 warm | hello@getdiscloser.org, hello@usediscloser.com, hello@usediscloser.work, support@getdiscloser.org, support@usediscloser.com, support@usediscloser.work |
 | Apify scraper | Running | LinkedIn/IG enrichment |
+
+---
+
+## Automated Weekly Pipeline
+
+The pipeline runs automatically every Monday at 6:00 AM via macOS launchd. No manual intervention required.
+
+### What happens Monday 6am
+
+```
+select-from-pool.js     Read ~/Desktop/Discloser_Leads/*.csv
+        │                Dedup against CRM (skip anyone already imported)
+        │                Pick top 500 by ICP score across all regions
+        ▼
+enrich-leads.js         LinkedIn enrichment via Apify (harvestapi/linkedin-profile-posts)
+        │                Instagram enrichment via Apify (sones/instagram-posts-scraper-lowcost)
+        │                ICP scoring + hook generation
+        ▼
+bulk-import-twenty.js   Import enriched leads into Twenty CRM
+        │                Create companies, set funnelStage: 'scored'
+        ▼
+prepare-batch.js        Filter scored contacts, assign A/B variants
+        │                Output Instantly-ready CSV
+        ▼
+personalize-batch.js    Claude LLM personalization for Hot/High tier
+        ▼
+push-to-instantly.js    Push to Instantly campaigns
+                         Update CRM: funnelStage: 'contacted'
+```
+
+Emails start sending the same morning as Instantly picks up the queue (Mon-Fri, 9-11 AM).
+
+### Launchd schedules
+
+| Plist | Label | Schedule | Command |
+|-------|-------|----------|---------|
+| Pipeline | `com.discloser.gtm.pipeline` | Monday 6:00 AM | `run-pipeline.js --full --auto` |
+| Sync | `com.discloser.gtm.sync` | Every 30 minutes | `sync-status.js --once` |
+
+### Lead pool
+
+Lead CSVs live at `~/Desktop/Discloser_Leads/` (configured via `LEAD_POOL_DIR` in `.env`):
+
+| File | Leads |
+|------|-------|
+| `Raw_Clay_SanDiego.csv` | ~4,987 |
+| `Raw_Clay_SanFrancisco.csv` | ~4,781 |
+| `Raw_Clay_SouthBay.csv` | ~3,121 |
+| **Total** | **~12,889** |
+
+At 500/week, this pool lasts ~25 weeks. No region filter — the best leads across all regions are selected each week. Leads already imported to the CRM are automatically skipped.
+
+### Manual commands
+
+```bash
+# Full pipeline (same as Monday automation)
+node scripts/run-pipeline.js --full --auto
+
+# Full pipeline, dry run
+node scripts/run-pipeline.js --full --auto --dry-run
+
+# Full pipeline, specific region only
+node scripts/run-pipeline.js --full --auto --region "San Diego"
+
+# Downstream only (prepare → personalize → push, reads from CRM)
+node scripts/run-pipeline.js --region "SF Bay" --auto
+
+# Resume a failed run
+node scripts/run-pipeline.js --resume <runId> --from-step enrich
+
+# Check launchd status
+node scripts/install-launchd.js --status
+
+# Reinstall/update launchd plists
+node scripts/install-launchd.js
+
+# Uninstall launchd plists
+node scripts/install-launchd.js --uninstall
+```
+
+### Logs
+
+```
+scripts/logs/launchd-pipeline.log    # Pipeline stdout
+scripts/logs/launchd-pipeline.err    # Pipeline stderr
+scripts/logs/launchd-sync.log        # Sync stdout
+scripts/logs/launchd-sync.err        # Sync stderr
+scripts/logs/runs/<runId>/           # Per-run structured logs
+```
+
+### run-pipeline.js flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--full` | off | Include upstream steps (select → enrich → import) |
+| `--auto` | off | Skip approval gate before push |
+| `--region <name>` | all regions | Filter by region (optional with `--full`) |
+| `--select-limit N` | 500 | Max leads to select from pool |
+| `--min-score N` | 55 | Min ICP score for pool selection |
+| `--test <name>` | none | A/B test name (e.g. `subject_v1`) |
+| `--mode <mode>` | first_touch | `first_touch`, `nurture`, or `soft_followup` |
+| `--skip-personalize` | off | Skip LLM personalization step |
+| `--dry-run` | off | No API calls, no file writes |
+| `--max-cost N` | 10.00 | Budget cap for LLM personalization |
 
 ---
 
@@ -101,15 +207,15 @@ These record the exact moment each milestone first occurs. Once set, they are ne
 
 ## End-to-End Pipeline Flow
 
-### Step 1: CSV drops into `leads/pool/`
+### Step 1: CSV drops into `~/Desktop/Discloser_Leads/`
 
-You export CSVs from Clay and drop them into the `leads/pool/` directory. The script accepts any CSV with these columns:
+You export CSVs from Clay and drop them into `~/Desktop/Discloser_Leads/` (or whatever `LEAD_POOL_DIR` points to in `.env`). The script accepts any CSV with these columns:
 
 | Required | Optional (from Clay/Apify enrichment) |
 |----------|--------------------------------------|
 | `First Name`, `Last Name`, `Work Email` | `Company Name`, `Location`, `LinkedIn Profile`, `IG handle`, `Job Title`, `icp_score`, `icp_tier` |
 
-You can drop multiple CSVs — the script reads all `.csv` files in the directory and deduplicates across them by email address.
+You can drop multiple CSVs — the script reads all `.csv` files in the directory and deduplicates across them by email address. Currently contains ~12,889 leads across San Diego, San Francisco, and South Bay.
 
 ### Step 2: `select-from-pool.js` picks the best leads
 
@@ -117,11 +223,12 @@ You can drop multiple CSVs — the script reads all `.csv` files in the director
 npm run pool:select -- --limit 500 --min-score 55
 ```
 
-This script does three things:
+This script does four things:
 
 1. **Reads every CSV** in `leads/pool/`, normalizes column names, extracts region from the location field (e.g. "San Francisco, CA" -> "SF Bay")
 2. **Deduplicates against the CRM** — calls Twenty's API, loads every email already in the system, and removes matches. If you already imported Jane Smith last week, she won't be selected again.
 3. **Sorts by quality** — Hot tier first, then High, then Medium, then Low. Within each tier, highest ICP score first. Takes the top N (your `--limit`).
+4. **Company spacing** — Only one lead per company per batch. If 3 agents at Keller Williams are in the candidate pool, the highest-scored one goes in this batch and the other 2 are deferred to future batches. This prevents flooding the same brokerage's inbox and looking spammy. Leads without a company name always pass through.
 
 **Output:** A CSV at `scripts/output/to_enrich_2026-03-05.csv` — these are the leads that need Apify enrichment before import.
 
@@ -321,12 +428,12 @@ Until Bucket 2 is built, when a reply comes in:
 
 | Campaign | ID | Emails | Subject line progression |
 |----------|----|--------|------------------------|
-| `hot_A_subject_v1` | `37fb9086-3898-4b31-9a7b-0d7a3406542d` | 4 | "quick question" -> "Chat with disclosures" -> "Cost estimates" -> "Close your file?" |
-| `hot_B_subject_v1` | `93945a58-4ab1-4e33-b607-dc36ac8810ba` | 4 | "Still using ChatGPT?" -> "Between showings" -> "Know what to negotiate" -> "Not the right time?" |
+| `hot_A_subject_v1` | `37fb9086-3898-4b31-9a7b-0d7a3406542d` | 4 | "quick question" -> "Chat with disclosures" -> "Cost estimates" -> "One last thing" |
+| `hot_B_subject_v1` | `93945a58-4ab1-4e33-b607-dc36ac8810ba` | 4 | "Still using ChatGPT?" -> "Between showings" -> "Know what to negotiate" -> "Before I go" |
 | `high_A_subject_v1` | `75eec7ab-694c-40ca-87dc-5416d896f4dc` | 4 | "disclosure reviews" -> "Chat with disclosures" -> "Cost estimates" -> "Closing your file" |
 | `high_B_subject_v1` | `49741a6e-91e9-4882-afaa-ec405bf8fe0b` | 4 | "Still using ChatGPT?" -> "Between showings" -> "Walk in with numbers" -> "Last note" |
-| `medium_A_subject_v1` | `7aa11264-2514-4f9b-928f-d4f787fc3609` | 4 | "a disclosure tool" -> "Chat with disclosures" -> "Know what to negotiate" -> "Should I stop emailing?" |
-| `medium_B_subject_v1` | `c83abf51-047f-4467-8720-b81d07ab477f` | 4 | "ChatGPT enough?" -> "Between showings" -> "Cost estimates" -> "Last note" |
+| `medium_A_subject_v1` | `7aa11264-2514-4f9b-928f-d4f787fc3609` | 4 | "a disclosure tool" -> "Chat with disclosures" -> "Know what to negotiate" -> "Last one" |
+| `medium_B_subject_v1` | `c83abf51-047f-4467-8720-b81d07ab477f` | 4 | "ChatGPT enough?" -> "Between showings" -> "Cost estimates" -> "One more thing" |
 
 ### Re-engagement campaigns
 
@@ -340,9 +447,10 @@ Until Bucket 2 is built, when a reply comes in:
 - **Hot tier**: Opens with `{{hookText}}` (personalized hook from enrichment) + `{{company}}`
 - **High tier**: References `{{company}}` ("agents at {{company}} do...")
 - **Medium tier**: Universal, only uses `{{firstName}}`
-- **All tiers**: 4-email sequence over ~14 days (day 0, +3, +5, +5). Email 1 = ChatGPT-falls-short hook. Email 2 = chat with docs / between showings. Email 3 = cost estimates / negotiation leverage. Email 4 = breakup (under 50 words).
+- **All tiers**: 4-email sequence over ~14 days (day 0, +3, +5, +5). Email 1 = ChatGPT-falls-short hook. Email 2 = chat with docs / between showings. Email 3 = cost estimates / negotiation leverage. Email 4 = direct breakup (action-oriented, no passive language).
+- **Signature**: All emails include a plain-text footer via `{{sender_name}}` merge variable — resolves to the sender persona (Lauri Parker or Jesslyn Rose) per inbox.
 - **Schedule**: Mon-Fri 9:00-11:00 AM, timezone `America/Creston` (UTC-7, equivalent to Pacific Daylight Time — Instantly doesn't accept `America/Los_Angeles`)
-- Copy follows brand voice guidelines from `Desktop/Skills/Marketing/` — no hype words, no exclamation points, grounded in product specifics
+- Copy follows brand voice guidelines — no hype words, no exclamation points, no passive language ("I'll just leave this here"), grounded in product specifics
 
 ---
 
@@ -375,17 +483,18 @@ Re-engagement (detected by sync-status.js after cooldown):
 ```bash
 # CRM
 CRM_PROVIDER=twenty
-TWENTY_BASE_URL=http://100.126.152.109:3000
+TWENTY_BASE_URL=https://discloser.twenty.com
 TWENTY_API_KEY=<jwt>
-TWENTY_PEOPLE_METADATA_ID=1b8108be-5895-497e-832a-1c8101a06040
+TWENTY_PEOPLE_METADATA_ID=93add812-8163-4b64-ac04-e75a4a86b7b9
 CRM_DRY_RUN=false
 CRM_MAX_UPSERT_PER_RUN=500
 
 # Instantly
-INSTANTLY_DISCLOSER_API_KEY=<base64-encoded key>
-INSTANTLY_ENABLED=false          # toggle for push-to-instantly safety
-INSTANTLY_SHADOW_MODE=true       # log what would be sent without calling API
+INSTANTLY_API_KEY=<base64-encoded key>
+INSTANTLY_ENABLED=true           # set to false to block all Instantly API calls
+INSTANTLY_SHADOW_MODE=false      # set to true to run push in dry-run mode (logs routing, no API calls)
 INSTANTLY_INBOXES=hello@getdiscloser.org,hello@usediscloser.com,hello@usediscloser.work,support@getdiscloser.org,support@usediscloser.com,support@usediscloser.work
+# Note: Campaign IDs are auto-resolved from Instantly API by name convention (no INSTANTLY_CAMPAIGN_* vars needed)
 
 # Enrichment
 APIFY_API_KEY=<key>
@@ -492,15 +601,33 @@ Then push the output CSV with `npm run batch:push`.
 scripts/
 ├── lib/
 │   ├── constants.js          # Shared constants, funnel stages, region map
-│   └── twenty-client.js      # Twenty CRM API client
+│   ├── twenty-client.js      # Twenty CRM API client
+│   ├── logger.js             # Structured JSON logging
+│   ├── mailer.js             # Email notifications on failure/completion
+│   └── run-tracker.js        # Per-run state tracking (artifacts, steps, timing)
+├── run-pipeline.js           # Full pipeline runner (--full for all 6 steps)
+├── install-launchd.js        # Install/uninstall macOS launchd scheduling
 ├── setup-twenty-fields.js    # One-time: create CRM fields
 ├── setup-instantly-campaigns.js  # Create/list Instantly campaigns
-├── select-from-pool.js       # Select leads from pool CSVs
+├── select-from-pool.js       # Select leads from ~/Desktop/Discloser_Leads/
 ├── bulk-import-twenty.js     # Import contacts to CRM
 ├── prepare-batch.js          # Query CRM → output Instantly-ready CSV
+├── personalize-batch.js      # Claude LLM personalization for Hot/High tier
 ├── push-to-instantly.js      # Push CSV → Instantly + update CRM
 ├── sync-status.js            # Poll Instantly → update CRM stages
-└── output/                   # Generated batch CSVs (gitignored, contains PII)
+├── output/                   # Generated batch CSVs (gitignored, contains PII)
+└── logs/                     # Launchd + per-run logs
+
+enrichment/
+├── enrich-leads.js           # Master enrichment pipeline (LinkedIn + IG + ICP + hooks)
+├── linkedin-enricher.js      # LinkedIn enrichment via Apify
+├── instagram-enricher.js     # Instagram enrichment via Apify
+└── ...
+
+~/Desktop/Discloser_Leads/    # Lead pool (Clay CSVs, outside repo)
+├── Raw_Clay_SanDiego.csv
+├── Raw_Clay_SanFrancisco.csv
+└── Raw_Clay_SouthBay.csv
 ```
 
 ### Existing campaign (pre-pipeline)
@@ -532,9 +659,9 @@ These are the core value props that all email copy is built on. Each email in th
 | 1 | 0 | ChatGPT falls short | Hook — "have you tried uploading disclosures to ChatGPT?" |
 | 2 | +3 | Chat with docs / between showings | Value add — "you can chat with the documents" |
 | 3 | +8 | Cost estimates / negotiation leverage | Proof — "walk in with numbers instead of guesses" |
-| 4 | +13 | (breakup) | Exit — under 50 words, leave the link |
+| 4 | +13 | (breakup) | Direct close — action-oriented, references a specific use case |
 | C1 | 0 | Set the stage for buyers | Different angle — "send the analysis to your buyer clients" |
-| C2 | +6 | (soft close) | "If disclosure reviews aren't a pain point, fair enough" |
+| C2 | +6 | (soft close) | Direct — "give Discloser a shot" |
 | D | 0 | (timing check) | "Wanted to check if the timing is better now" |
 
 ---
@@ -543,9 +670,9 @@ These are the core value props that all email copy is built on. Each email in th
 
 Email copy was written using skills from `Desktop/Skills/Marketing/`:
 
-- **Brand voice**: No hype words, no exclamation points, no "revolutionize/transform/empower". Lead with facts.
+- **Brand voice**: No hype words, no exclamation points, no "revolutionize/transform/empower". No passive language ("I'll just leave this here", "no worries", "link is below if you ever need it"). Lead with facts.
 - **Taboo phrases**: Avoided "game-changer", "seamlessly", "cutting-edge", "unlock", "supercharge", etc.
-- **Structure**: Short paragraphs (1-3 sentences), plain English, specific product claims, always end with `discloser.co`
+- **Structure**: Short paragraphs (1-3 sentences), plain English, specific product claims. Signature appended via `{{sender_name}}` merge variable.
 - **Personalization**: Hot tier gets `{{hookText}}` (enrichment-based hook), high tier gets `{{company}}`, medium tier gets `{{firstName}}` only
 - **Value props in sequence**: See table above
 
@@ -567,47 +694,77 @@ Everything below was built in a single session on 2026-03-04/05:
 
 5. **Batch preparation** — `prepare-batch.js` queries Twenty for scored leads, applies suppression (already contacted, cooldown window, test dedup), assigns A/B variants via deterministic hash, respects sending ramp limits, outputs Instantly-ready CSV. Supports three modes: `first_touch`, `nurture`, `soft_followup`.
 
-6. **Instantly push** — `push-to-instantly.js` splits CSV by variant, assigns inboxes from shared pool (6 inboxes, round-robin by lowest send count), pushes to Instantly campaigns, writes back campaign IDs + timestamps to Twenty. Inbox reuse on nurture for sender consistency.
+6. **Instantly push** — `push-to-instantly.js` fetches campaign list from Instantly API, auto-routes each lead to the correct campaign by `{tier}_{variant}_{testName}` name convention. Assigns inboxes from shared pool (6 inboxes, round-robin by lowest send count), pushes to Instantly campaigns, writes back campaign IDs + timestamps to Twenty. Inbox reuse on nurture for sender consistency.
 
 7. **Status sync** — `sync-status.js` polls Instantly every 30 min, maps events to CRM stages, sets `emailOpenedAt`/`repliedAt` timestamps on first occurrence, detects sequence completions after 14 days, detects re-engage eligibility after cooldowns, prints funnel snapshot + A/B test results table.
 
 8. **Instantly campaigns** — `setup-instantly-campaigns.js` creates campaigns via API with full email sequences baked in. 8 campaigns created as drafts (6 first-touch A/B per tier + 1 nurture + 1 soft followup). Real copy written using brand voice skills — no placeholders.
 
-9. **Email copy** — Absorbed copywriting skills from `Desktop/Skills/Marketing/` (brand-writer rubric, taboo phrases, voice examples, email sequence design, copy editing sweeps, plain English alternatives). Wrote tier-specific copy based on Discloser value props: ChatGPT context loss, chat with docs between showings, cost estimates for negotiation, breakup emails under 50 words. Hot tier gets `{{hookText}}` personalization, high tier gets `{{company}}`, medium is universal.
+9. **Email copy** — Tier-specific copy based on Discloser value props: ChatGPT context loss, chat with docs between showings, cost estimates for negotiation, direct breakup (action-oriented, no passive language). Hot tier gets `{{hookText}}` personalization, high tier gets `{{company}}`, medium is universal. All emails include a plain-text signature with `{{sender_name}}` (resolves to Lauri Parker or Jesslyn Rose per inbox), company tagline, and discloser.co.
 
 10. **Timestamp fields** — Added 4 event timestamp fields (`firstContactedAt`, `emailOpenedAt`, `repliedAt`, `opportunityEnteredAt`) that capture first occurrence only and are never overwritten. Wired into push-to-instantly and sync-status.
+
+### 2026-03-10 — CRM migration + enrichment bug fixes
+
+1. **Twenty CRM migrated to cloud** — Moved from self-hosted Docker on Mac Mini (`http://100.126.152.109:3000` via Tailscale) to Twenty's hosted plan at `https://discloser.twenty.com` ($12/mo). No more dependency on Mac Mini being awake, Docker running, or Tailscale connected. Updated `.env`, all runbooks, and `crm/crm.md`.
+
+2. **CRM data model re-created** — Ran `setup-twenty-fields.js` on the new cloud instance. All 35 custom fields created (People object metadata ID: `93add812-8163-4b64-ac04-e75a4a86b7b9`).
+
+3. **Twenty API endpoints fixed** — Cloud Twenty serves the SPA at `/api/objects/` (returns HTML). All pipeline scripts updated to use `/rest/` endpoints which return JSON. Affected: `twenty-client.js` (`paginateAll`, `batchCreate`, `batchUpdate`, `upsertCompany`, `findPersonByEmail`).
+
+4. **LinkedIn enrichment input field fixed** — `enrich-leads.js` was passing `{ urls }` to the `harvestapi/linkedin-profile-posts` actor, but the actor expects `{ profileUrls }`. Result: 0 profiles returned despite SUCCEEDED status. Fixed.
+
+5. **LinkedIn result matching fixed** — The actor returns individual posts (not profiles). Each item is one post with `author.publicIdentifier` as the profile key. Rewrote `enrichLinkedIn()` to group posts by author and match via `publicIdentifier` instead of looking for `item.profileUrl`.
+
+6. **Instagram username matching fixed** — `sones/instagram-posts-scraper-lowcost` returns posts with `scraped_username` and `user.username`, not `ownerUsername`. Updated the join logic to check `post.scraped_username || post.user?.username || post.ownerUsername`.
+
+7. **Instagram caption parsing fixed** — Actor returns `caption` as an object (`{ pk, text }`) not a string. Added `getCaptionText()` helper that handles both string and object formats. Affects `isListingPost()`, `isSoldPost()`, `extractAddresses()`, `extractNeighborhoods()`.
+
+8. **Instagram timestamp handling fixed** — Actor uses `taken_at` (Unix epoch in seconds) instead of `timestamp` (ISO string). Added `getPostDate()` helper that handles both formats.
+
+9. **Apify client API updated** — `waitForFinish` option renamed to `waitSecs` in newer `apify-client` versions. Updated both LinkedIn and Instagram actor calls in `enrich-leads.js`.
+
+10. **`select-from-pool.js` updated for Clay CSV format** — Added `ICP Post-Instagram` / `ICP Post Work Email` / `ICP Post-LinkedIn` as ICP score source columns (Clay's progressive scoring). Added IG handle URL stripping (Clay exports full Instagram URLs, not just usernames).
+
+11. **10-lead test run validated** — Full pipeline tested: pool selection → LinkedIn + Instagram enrichment → ICP scoring → hook generation. Results: 8/10 LinkedIn enriched (80%), 10/10 Instagram enriched (100%), 10/10 hooks generated, ICP distribution: 1 Hot, 6 High, 3 Medium. Stale data penalties and recency bonuses confirmed working.
+
+12. **Instantly v2 API payload fix** — `push-to-instantly.js` was sending `{ campaign_id, leads: [...] }` but the Instantly v2 `POST /leads` endpoint expects a flat object per lead: `{ email, campaign_id, first_name, ... }`. No bulk endpoint exists in v2. Rewrote `pushLeadsToCampaign()` to send one lead at a time.
+
+13. **Shadow mode implemented** — `push-to-instantly.js` now checks `INSTANTLY_ENABLED` and `INSTANTLY_SHADOW_MODE` env vars. If `INSTANTLY_ENABLED=false` or `INSTANTLY_SHADOW_MODE=true`, the script runs in dry-run mode (no Instantly API calls, no CRM updates). Previously only the `--dry-run` CLI flag prevented real calls.
+
+14. **CRM safety on push failure** — `push-to-instantly.js` now only updates CRM records to `contacted` if the Instantly push for that campaign had 0 errors. Previously, CRM was updated regardless of push success, causing dirty state (leads marked `contacted` when Instantly never received them).
+
+15. **Company spacing in pool selection** — `select-from-pool.js` now enforces one lead per company per batch. Same-company leads are deferred to the back of the candidate list (not skipped), so they land in future batches instead of being emailed on the same day. Prevents multiple agents at the same brokerage receiving outreach simultaneously.
+
+16. **launchd scheduling installed** — `sync-status.js` runs every 30 minutes via macOS launchd (`com.discloser.gtm.sync`). Full pipeline scheduled for Monday 6 AM (`com.discloser.gtm.pipeline`). Logs at `scripts/logs/`.
+
+17. **10-lead push to Instantly successful** — All 10 test leads pushed: 1 hot_B, 3 high_B, 3 high_A, 3 medium_A. 6 inboxes balanced (2/2/2/2/1/1). CRM updated with campaign IDs, assigned inboxes, and timestamps. Pipeline confirmed end-to-end.
+
+18. **Full pipeline automation** — `run-pipeline.js` extended with `--full` flag to chain all 6 steps: select → enrich → import → prepare → personalize → push. Upstream steps (select, enrich, import) run as child processes. Launchd plist updated to `--full --auto` on Monday 6 AM. Region filter removed — selects best leads across all regions.
+
+19. **Lead pool moved to Desktop** — `select-from-pool.js` now reads from `LEAD_POOL_DIR` env var (default: `~/Desktop/Discloser_Leads/`). Three Clay CSVs: San Diego (~4,987), San Francisco (~4,781), South Bay (~3,121) = ~12,889 total leads. At 500/week, ~25 weeks of pipeline fuel.
+
+20. **Region filter made optional** — `prepare-batch.js` and `run-pipeline.js` no longer require `--region`. When omitted, all regions are included. The automated Monday pipeline runs without a region filter.
 
 ---
 
 ## What Needs to Happen Next
 
-### Immediate (to start sending)
+### Automated (no action needed)
 
-1. **Drop Clay CSVs into `leads/pool/`** — Export your 15k contacts from Clay as CSV files and place them in the `leads/pool/` directory. This is the entry point for everything.
+The Monday 6 AM pipeline handles everything: pool selection, enrichment, CRM import, batch preparation, personalization, and push to Instantly. Sync runs every 30 minutes.
 
-2. **Run pool selection** — `npm run pool:select -- --limit 500 --min-score 55` to pick the first batch of best leads.
+### Manual monitoring
 
-3. **Run Apify enrichment** — `npm run enrich:linkedin` and `npm run enrich:instagram` on the selected batch to populate LinkedIn/IG fields and generate hooks.
+1. **Check pipeline ran** — `tail scripts/logs/launchd-pipeline.log` on Monday morning. Or check `scripts/logs/runs/` for the latest run directory.
 
-4. **Import to CRM** — `npm run import -- scripts/output/enriched_batch.csv --region "SF Bay"` (start with `--dry-run --limit 50` to verify).
+2. **Activate new Instantly campaigns** — If the pipeline creates leads for tier/variant combos that don't have active campaigns yet, activate them in the Instantly UI. The pipeline creates campaigns as drafts.
 
-5. **Review campaigns in Instantly UI** — All 8 campaigns are created as drafts. Review the email copy, adjust if needed, but do NOT activate yet.
+3. **Monitor A/B results** — Run `npm run batch:sync -- --once --verbose` to see open/reply rates per campaign label.
 
-6. **Prepare first batch** — `npm run batch:prepare -- --region "SF Bay" --min-score 70 --tier hot,high --test subject_v1 --limit 100` (start small, hot/high tier only).
+### When pool runs dry (~25 weeks)
 
-7. **Push to Instantly (dry run first)** — `npm run batch:push -- scripts/output/batch_*.csv --dry-run`, review, then run without `--dry-run`.
-
-8. **Activate campaigns in Instantly UI** — Only after push is confirmed. Emails start sending on the schedule (Mon-Fri 9-11 AM).
-
-9. **Start sync loop** — `npm run batch:sync` to begin polling Instantly for status changes every 30 min.
-
-### After first batch is sending (week 1-2)
-
-10. **Monitor A/B results** — Run `npm run batch:sync -- --once --verbose` to see open/reply rates per campaign label. Determine if Variant A or B subject lines perform better.
-
-11. **Scale up** — Increase batch sizes following the sending ramp (week 1: 900/week, week 2: 1,050/week, week 3+: 1,200/week). Add more regions.
-
-12. **Import remaining leads** — Repeat steps 2-4 for additional batches until all 15k are in the CRM.
+4. **Export new leads from Clay** — Drop new CSV files into `~/Desktop/Discloser_Leads/`. The pipeline will pick them up on the next Monday run. Existing leads (already in CRM) are automatically skipped.
 
 ### After sequences complete (week 3+)
 

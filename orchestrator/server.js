@@ -1,5 +1,5 @@
 import { createServer } from 'http';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, extname } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -194,6 +194,46 @@ async function router(req, res) {
       { headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` } }
     );
     sendJson(res, resp.ok ? 200 : 502, await resp.json());
+    return;
+  }
+
+  // --- Pipeline Dashboard API ---
+  const RUNS_DIR = join(__dirname, '..', 'scripts', 'logs', 'runs');
+  const PIPELINE_LOG = join(__dirname, '..', 'scripts', 'logs', 'pipeline.jsonl');
+
+  if (req.url === '/api/pipeline/runs' && req.method === 'GET') {
+    const runs = [];
+    if (existsSync(RUNS_DIR)) {
+      const dirs = readdirSync(RUNS_DIR)
+        .filter((d) => d.startsWith('run_'))
+        .sort()
+        .reverse()
+        .slice(0, 50);
+      for (const dir of dirs) {
+        const summaryPath = join(RUNS_DIR, dir, 'run-summary.json');
+        if (existsSync(summaryPath)) {
+          try {
+            runs.push(JSON.parse(readFileSync(summaryPath, 'utf-8')));
+          } catch { /* skip corrupt */ }
+        }
+      }
+    }
+    sendJson(res, 200, runs);
+    return;
+  }
+
+  if (req.url?.startsWith('/api/pipeline/log') && req.method === 'GET') {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 200);
+    const entries = [];
+    if (existsSync(PIPELINE_LOG)) {
+      const lines = readFileSync(PIPELINE_LOG, 'utf-8').trim().split('\n');
+      const tail = lines.slice(-limit);
+      for (const line of tail) {
+        try { entries.push(JSON.parse(line)); } catch { /* skip */ }
+      }
+    }
+    sendJson(res, 200, entries);
     return;
   }
 

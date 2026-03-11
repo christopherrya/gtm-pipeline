@@ -24,6 +24,9 @@ import {
   toInt,
 } from './lib/twenty-client.js';
 import { extractRegion, icpTier } from './lib/constants.js';
+import { createLogger } from './lib/logger.js';
+
+const log = createLogger({ step: 'import' });
 
 // ---------------------------------------------------------------------------
 // CLI arg parsing
@@ -67,7 +70,7 @@ async function main() {
   console.log(`\nReading: ${fullPath}`);
   const csvContent = readFileSync(fullPath, 'utf-8');
   let rows = parse(csvContent, { columns: true, skip_empty_lines: true, trim: true });
-  console.log(`  Parsed ${rows.length} rows`);
+  log.info('CSV parsed', { rows: rows.length, path: fullPath });
 
   // Validate required columns
   const columns = Object.keys(rows[0] || {});
@@ -169,7 +172,7 @@ async function main() {
   if (toCreate.length > 0) {
     console.log('\n  Batch creating People...');
     createResult = await batchCreate('people', toCreate);
-    console.log(`  Created: ${createResult.created}, Errors: ${createResult.errors}`);
+    log.info('People created', { created: createResult.created, errors: createResult.errors });
   }
 
   // Batch update
@@ -177,7 +180,7 @@ async function main() {
   if (toUpdate.length > 0) {
     console.log('  Batch updating People...');
     updateResult = await batchUpdate('people', toUpdate);
-    console.log(`  Updated: ${updateResult.updated}, Errors: ${updateResult.errors}`);
+    log.info('People updated', { updated: updateResult.updated, errors: updateResult.errors });
   }
 
   // Print summary

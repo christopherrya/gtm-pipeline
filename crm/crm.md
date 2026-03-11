@@ -1,23 +1,22 @@
-# CRM Infrastructure (Twenty on Mac mini)
+# CRM Infrastructure (Twenty Cloud)
 
 ## Objective
 
-Run a private, self-hosted CRM for DISCLOSER on a Mac mini, reachable from a MacBook over Tailscale, and integrated with the GTM orchestrator as the system of record for contacts and funnel state.
+CRM for DISCLOSER, integrated with the GTM orchestrator as the system of record for contacts and funnel state.
 
 ## Current Decision
 
-- CRM platform: Twenty CRM (open-source, modern REST API)
-- Hosting: Mac mini (persistent, via Docker Compose)
-- Remote access: Tailscale private network
-- Public exposure: none
-- Outbound send path: disabled until warmup complete
+- CRM platform: Twenty CRM (cloud-hosted plan, $12/mo)
+- Hosting: Twenty Cloud (`https://discloser.twenty.com`)
+- Remote access: always available (no Tailscale/VPN needed)
+- Previous: self-hosted on Mac Mini via Docker — migrated to cloud 2026-03-10
 
 ## Access
 
-- Twenty UI: `http://100.126.152.109:3000`
+- Twenty UI: `https://discloser.twenty.com`
 - API base: same URL, endpoints under `/rest/`
 - Auth: Bearer token (API key generated in Twenty Settings > Accounts > API keys)
-- Works from anywhere — Tailscale is a mesh VPN, not LAN-only. As long as both machines are signed into Tailscale and the Mac mini is awake, the IP works from any network.
+- Always available — no dependency on Mac Mini, Docker, or Tailscale.
 
 ## Why Twenty over SuiteCRM
 
@@ -62,24 +61,24 @@ curl http://localhost:3000/healthz
 ```
 
 First-run setup:
-1. Open `http://100.126.152.109:3000` in browser
+1. Open `https://discloser.twenty.com` in browser
 2. Create workspace and admin account
 3. Go to Settings > Accounts > API keys > Create new key
 4. Copy the key to `.env` as `TWENTY_API_KEY`
 
 ### Custom fields
 
-15 custom fields on the People object were created via the metadata API (2026-03-04). All API names confirmed matching `twenty.js` field mapping:
+35 custom fields on the People object were created via the metadata API (re-created on cloud 2026-03-10). All API names confirmed matching `twenty.js` field mapping:
 
 ```bash
 # Example: create a field via API
-curl -X POST http://100.126.152.109:3000/rest/metadata/fields \
+curl -X POST https://discloser.twenty.com/rest/metadata/fields \
   -H "Authorization: Bearer $TWENTY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"icpScore","label":"ICP Score","type":"NUMBER","objectMetadataId":"<people-object-id>"}'
 ```
 
-People object metadata ID: `1b8108be-5895-497e-832a-1c8101a06040`
+People object metadata ID: `93add812-8163-4b64-ac04-e75a4a86b7b9`
 
 ### Keeping Mac mini awake
 
@@ -108,7 +107,7 @@ Rate limit: Twenty allows ~100 API calls/min. Serial upsert uses 2 calls/contact
 ## Required Environment Variables (`.env`)
 
 - `CRM_PROVIDER=twenty`
-- `TWENTY_BASE_URL=http://100.126.152.109:3000`
+- `TWENTY_BASE_URL=https://discloser.twenty.com`
 - `TWENTY_API_KEY=<your-api-key>`
 - `CRM_DRY_RUN=true`
 - `CRM_MAX_UPSERT_PER_RUN=500`
