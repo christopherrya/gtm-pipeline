@@ -172,7 +172,7 @@ function install() {
 
   try {
     execSync(`launchctl load "${pipelinePlistPath}"`);
-    console.log(`  Loaded:  ${LABELS.pipeline} (Monday 9am)`);
+    console.log(`  Loaded:  ${LABELS.pipeline} (Monday 6am)`);
   } catch (err) {
     console.error(`  Failed to load ${LABELS.pipeline}: ${err.message}`);
   }

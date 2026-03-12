@@ -1,8 +1,8 @@
 # Mass Email Pipeline — Status & Handoff Guide
 
-**Last updated:** 2026-03-10
-**Branch:** `feature/email-drip-campaign`
-**Status:** Live. First batch sent (345 San Diego leads). Automated weekly pipeline active.
+**Last updated:** 2026-03-11
+**Branch:** `main`
+**Status:** Live. 1,052 leads active across all 8 campaigns (hot/high/medium/low). Automated weekly pipeline active.
 
 ---
 
@@ -16,8 +16,8 @@ Every script in the pipeline is implemented and working. The pipeline takes real
 |--------|-----------|---------|--------|
 | `scripts/lib/constants.js` | — | Funnel stages, ICP tiers, region map, re-engagement rules, inbox pool, sending ramp | Done |
 | `scripts/lib/twenty-client.js` | — | Twenty CRM API client with rate limiting, pagination, batch ops | Done |
-| `scripts/setup-twenty-fields.js` | `npm run setup:fields` | Create 31 custom fields on Twenty People object | Done — 31 fields confirmed |
-| `scripts/setup-instantly-campaigns.js` | `npm run setup:campaigns` | Create Instantly campaigns with full email sequences | Done — 8 campaigns created as drafts |
+| `scripts/setup-twenty-fields.js` | `npm run setup:fields` | Create 36 custom fields on Twenty People object | Done — 36 fields confirmed |
+| `scripts/setup-instantly-campaigns.js` | `npm run setup:campaigns` | Create Instantly campaigns with full email sequences | Done — 8 campaigns created, all active |
 | `scripts/select-from-pool.js` | `npm run pool:select` | Select leads from `~/Desktop/Discloser_Leads/` by tier, dedup against CRM | Done |
 | `scripts/run-pipeline.js` | `npm run pipeline` | Full pipeline runner: select → enrich → import → prepare → personalize → push | Done |
 | `scripts/install-launchd.js` | — | Install macOS launchd plists for automated scheduling | Done |
@@ -25,6 +25,7 @@ Every script in the pipeline is implemented and working. The pipeline takes real
 | `scripts/prepare-batch.js` | `npm run batch:prepare` | Query Twenty for scored leads, assign A/B, output Instantly-ready CSV | Done |
 | `scripts/push-to-instantly.js` | `npm run batch:push` | Push CSV to Instantly campaigns, write back campaign IDs to Twenty | Done |
 | `scripts/sync-status.js` | `npm run batch:sync` | Poll Instantly for opens/replies/bounces, update Twenty funnel stages | Done |
+| `scripts/reset-queued-leads.js` | `npm run leads:reset-queued` | Recover leads stuck as `queued` with no `instantlyCampaignId` — resets to `scored` | Done |
 
 ### Additional npm aliases
 
@@ -32,6 +33,8 @@ Every script in the pipeline is implemented and working. The pipeline takes real
 |-------|-------------|
 | `npm run batch:nurture` | `prepare-batch.js --mode nurture` — select opened-no-reply contacts for Campaign C |
 | `npm run batch:followup` | `prepare-batch.js --mode soft_followup` — select replied-went-cold contacts for Campaign D |
+| `npm run leads:reset-queued:dry` | `reset-queued-leads.js --dry-run` — preview stuck leads before resetting |
+| `npm run leads:reset-queued` | `reset-queued-leads.js --yes` — reset stuck leads back to scored |
 
 ---
 
@@ -40,7 +43,7 @@ Every script in the pipeline is implemented and working. The pipeline takes real
 | System | Status | Details |
 |--------|--------|---------|
 | Twenty CRM | Running | Cloud @ `https://discloser.twenty.com` (Twenty hosted) |
-| Twenty People fields | 35 confirmed | 15 original + 12 pipeline + 4 IG enrichment + 4 event timestamps |
+| Twenty People fields | 36 confirmed | 15 original + 12 pipeline + 4 IG enrichment + 5 event timestamps (incl. `enrichedAt`) |
 | Instantly API | Working | v2 API, Bearer auth with `INSTANTLY_DISCLOSER_API_KEY` |
 | Instantly inboxes | 6 warm | hello@getdiscloser.org, hello@usediscloser.com, hello@usediscloser.work, support@getdiscloser.org, support@usediscloser.com, support@usediscloser.work |
 | Apify scraper | Running | LinkedIn/IG enrichment |
@@ -190,12 +193,13 @@ scripts/logs/runs/<runId>/           # Per-run structured logs
 | `campaignLabel` | TEXT | `push-to-instantly.js` | Human-readable label: `hot_A_subject_v1`, `high_B_subject_v1`, etc. |
 | `reEngageAttempts` | NUMBER | `sync-status.js` | How many times this contact has been re-engaged after sequence completion |
 
-### Event timestamp fields (4)
+### Event timestamp fields (5)
 
 These record the exact moment each milestone first occurs. Once set, they are never overwritten — they capture the first occurrence only.
 
 | Field | Type | Set By | When | Overwritten? |
 |-------|------|--------|------|-------------|
+| `enrichedAt` | TEXT | `bulk-import-twenty.js` | Set to `linkedin_enriched_at` from CSV, falls back to import timestamp. Used by `prepare-batch.js` to enforce the 2-day freshness gate — leads enriched more than 2 days ago are skipped until re-enriched. | On every import/re-import |
 | `firstContactedAt` | TEXT | `push-to-instantly.js` | First email push to Instantly (not set on nurture/followup, only first touch) | Never |
 | `emailOpenedAt` | TEXT | `sync-status.js` | First time Instantly reports an open event for this contact | Never |
 | `repliedAt` | TEXT | `sync-status.js` | First time Instantly reports a reply event for this contact | Never |
@@ -289,8 +293,10 @@ This queries the CRM, not the CSV files:
 ### Step 6: `push-to-instantly.js` sends them to Instantly
 
 ```bash
-npm run batch:push -- scripts/output/batch_sf_bay_subject_v1_2026-03-05.csv
+npm run batch:push -- scripts/output/batch_sf_bay_subject_v1_2026-03-05.csv --test subject_v1
 ```
+
+> **Important:** Always pass `--test <testName>` when running push directly (not via `run-pipeline.js`). The push script resolves campaign names using the tier + variant + testName convention (e.g. `hot_A_subject_v1`). If the batch CSV has no `testName` column — which happens when `prepare-batch.js` is run without `--test` — the script cannot find the campaigns without this flag.
 
 This is where leads enter Instantly:
 
@@ -422,25 +428,25 @@ Until Bucket 2 is built, when a reply comes in:
 
 ---
 
-## Instantly Campaigns (all paused/draft)
+## Instantly Campaigns (all active)
 
 ### First Touch — A/B subject line test per ICP tier
 
-| Campaign | ID | Emails | Subject line progression |
-|----------|----|--------|------------------------|
-| `hot_A_subject_v1` | `37fb9086-3898-4b31-9a7b-0d7a3406542d` | 4 | "quick question" -> "Chat with disclosures" -> "Cost estimates" -> "One last thing" |
-| `hot_B_subject_v1` | `93945a58-4ab1-4e33-b607-dc36ac8810ba` | 4 | "Still using ChatGPT?" -> "Between showings" -> "Know what to negotiate" -> "Before I go" |
-| `high_A_subject_v1` | `75eec7ab-694c-40ca-87dc-5416d896f4dc` | 4 | "disclosure reviews" -> "Chat with disclosures" -> "Cost estimates" -> "Closing your file" |
-| `high_B_subject_v1` | `49741a6e-91e9-4882-afaa-ec405bf8fe0b` | 4 | "Still using ChatGPT?" -> "Between showings" -> "Walk in with numbers" -> "Last note" |
-| `medium_A_subject_v1` | `7aa11264-2514-4f9b-928f-d4f787fc3609` | 4 | "a disclosure tool" -> "Chat with disclosures" -> "Know what to negotiate" -> "Last one" |
-| `medium_B_subject_v1` | `c83abf51-047f-4467-8720-b81d07ab477f` | 4 | "ChatGPT enough?" -> "Between showings" -> "Cost estimates" -> "One more thing" |
+| Campaign | ID | Emails | Value Prop Angle |
+|----------|----|--------|-----------------|
+| `hot_A_subject_v1` | `d54e3206-540f-43c7-b706-7390a3415b1f` | 4 | **A: ChatGPT comparison** — "tried ChatGPT?" -> chat with docs -> cost estimates -> breakup |
+| `hot_B_subject_v1` | `e9d8e840-cb2f-4304-b0f2-bffadd64360d` | 4 | **B: Speed + costs** — "247 pages in 3 min" -> full packet upload -> chat with docs -> breakup |
+| `high_A_subject_v1` | `24d3a419-a603-48b4-a825-153946196121` | 4 | **A: ChatGPT comparison** — "upload to ChatGPT?" -> chat with docs -> cost estimates -> breakup |
+| `high_B_subject_v1` | `48ed281c-3d63-4f65-bf4a-660807767816` | 4 | **B: Speed + costs** — "3 min, cost estimates" -> full packet upload -> chat with docs -> breakup |
+| `medium_A_subject_v1` | `fe28a9db-86d1-4904-b811-f8bd00dab7c8` | 4 | **A: ChatGPT comparison** — "ChatGPT loses context" -> chat with docs -> cost estimates -> breakup |
+| `medium_B_subject_v1` | `ff4aeff6-b485-47a9-ba24-52b044dd8a6c` | 4 | **B: Speed + costs** — "247 pages, cost estimates" -> full packet upload -> chat with docs -> breakup |
 
 ### Re-engagement campaigns
 
 | Campaign | ID | Emails | Purpose |
 |----------|----|--------|---------|
-| `hot_C_nurture_v1` | `3f60be37-6f3c-457d-a82e-137a7f956a09` | 2 | Nurture: opened but didn't reply. Different angle — send analysis to buyer clients. |
-| `hot_D_followup_v1` | `165dc2d5-cec6-455d-a4da-89c841bb514e` | 1 | Soft followup: replied then went cold. "Is timing better now?" |
+| `hot_C_nurture_v1` | `38048816-95fe-4504-80b7-73e67849bf2f` | 2 | Nurture: opened but didn't reply. Different angle — send analysis to buyer clients. |
+| `hot_D_followup_v1` | `bccb5068-a886-4709-88d7-8e4f45c85dd0` | 1 | Soft followup: replied then went cold. "Is timing better now?" |
 
 ### Email copy details
 
@@ -498,6 +504,10 @@ INSTANTLY_INBOXES=hello@getdiscloser.org,hello@usediscloser.com,hello@usedisclos
 
 # Enrichment
 APIFY_API_KEY=<key>
+
+# Pipeline config
+CAMPAIGN_START_DATE=2026-03-10   # Used by prepare-batch.js to calculate ramp week and enforce weekly send limits
+                                  # Week 1=900/wk, Week 2=1050/wk, Week 3+=1200/wk. Update if you restart the ramp.
 ```
 
 ---
@@ -636,6 +646,92 @@ There's one pre-existing campaign `Discloser_exp_1` (ID: `fa9e48e5-b220-459c-b21
 
 ---
 
+## Enrichment Freshness Policy
+
+**Rule:** Leads must be enriched within 2 days of being pushed to Instantly. This is enforced in `prepare-batch.js` via the `enrichedAt` field.
+
+**Why this matters:** Email personalization pulls from live enrichment data — LinkedIn recent post topics, Instagram activity, hook text. Stale data produces generic or incorrect personalizations. More critically, the `{{hookText}}` merge variable in hot/high tier emails references specific recent activity. If enrichment is a week old, that activity may no longer be recent enough to feel genuine.
+
+**How it works:**
+1. `bulk-import-twenty.js` sets `enrichedAt` on every create/update (from `linkedin_enriched_at` in CSV, or falls back to import timestamp)
+2. `prepare-batch.js` filters out any lead where `enrichedAt` is older than `ENRICHMENT_MAX_AGE_DAYS` (2)
+3. Stale leads remain at `funnelStage: 'scored'` — they are NOT moved to `queued`. They will be re-enriched the next time a full pipeline run picks them up
+4. Legacy leads (imported before `enrichedAt` existed) have no value in this field — they pass through the check to avoid breaking existing data
+
+**Consequence of stale leads reaching Instantly:** The main risk is not deliverability, it's relevance. A hook referencing a LinkedIn post from 2 weeks ago reads as stale to the recipient. The 2-day window ensures the enrichment data is close enough to the send date to feel timely.
+
+---
+
+## Sending Rate & Capacity
+
+The pipeline enforces a sending ramp via `CAMPAIGN_START_DATE` in `.env`. The ramp limit is auto-calculated each time `prepare-batch.js` runs.
+
+| Week | Per inbox/day | 6 inboxes × 5 days | Weekly cap |
+|------|--------------|---------------------|------------|
+| 1 | 30 | | 900 |
+| 2 | 35 | | 1,050 |
+| 3+ | 40 | | 1,200 |
+
+**The ramp cap is a batch-level limit**, not a per-day limit. It limits how many leads `prepare-batch.js` queues in a single Monday run. Instantly still needs its own per-inbox daily send limits configured in **Instantly → Email Accounts → each inbox → Daily sending limit** — match these to the ramp table above. Without this, Instantly will send all queued leads as fast as possible regardless of the batch cap.
+
+**Campaign start date** (`CAMPAIGN_START_DATE=2026-03-10` in `.env`): this is the reference point for week calculation. If you pause the campaign for a week and want to restart the ramp, update this date.
+
+---
+
+## Incident Log
+
+### 2026-03-11 — Leads not sending; hot/high/medium campaigns empty
+
+**What happened:** No emails went out the morning of 2026-03-11 despite all campaigns being active. Investigation found two compounding issues:
+
+**Root cause 1 — Campaigns had no sending accounts connected.**
+Campaigns were created via the Instantly API (`setup-instantly-campaigns.js`) but the API does not automatically attach sending accounts (inboxes) to campaigns. Inboxes must be connected manually in the Instantly UI under each campaign's settings. This was an undocumented requirement.
+*Resolution:* Manually connected all 6 inboxes to all 8 campaigns in the Instantly UI.
+
+**Root cause 2 — 707 hot/high/medium leads permanently stuck as `queued`.**
+During the March 10 pipeline run, `prepare-batch.js` marked 1,054 leads as `queued` and wrote them to a CSV, but the push step aborted before running. The pipeline was re-run, but by then those 1,054 leads were in `queued` state — invisible to the weekly pipeline, which only queries `funnelStage: 'scored'`. Of the 1,054 stuck leads, 345 low-tier ones were eventually caught and pushed in a later run; the remaining 709 hot/high/medium leads had no `instantlyCampaignId` and were silently skipped forever.
+*Resolution:* Built `reset-queued-leads.js` to identify leads stuck as `queued` with no `instantlyCampaignId` and reset them to `scored`. 707 leads recovered and pushed same day.
+
+**Why the queue-without-push scenario is dangerous:** `prepare-batch.js` marks leads as `queued` *before* the push runs. If the push fails for any reason, those leads are in a terminal state — the pipeline won't touch them again and there's no automatic recovery. The `reset-queued-leads.js` script is the manual recovery tool for this scenario.
+
+---
+
+### Bug log (fixed 2026-03-11)
+
+**Bug 1: `sync-status.js` crashing every 30 minutes**
+- *Symptom:* `sync-status.js` (the launchd job running every 30 min) was failing with: `'filter' invalid for 'instantlyCampaignId[neq]:'. eg: price[gte]:10`
+- *Root cause:* The filter `{ instantlyCampaignId: { neq: '' } }` was generating `instantlyCampaignId[neq]:` with an empty string after the colon. The Twenty API requires a non-empty value for `neq` filters.
+- *Why empty-string neq doesn't work:* The Twenty REST filter syntax is `field[op]:value`. An empty `value` is syntactically invalid. There's no `IS NOT NULL` equivalent in the filter builder.
+- *Fix:* Removed the API filter entirely. Now fetches all people, then filters client-side with `people.filter(p => !!p.instantlyCampaignId)`. The CRM is small enough (~1,000 people) that this is fast and avoids the filter syntax problem permanently.
+- *File:* `scripts/sync-status.js` line ~118
+
+**Bug 2: `push-to-instantly.js` ignoring `--test` CLI flag**
+- *Symptom:* Running `push-to-instantly.js <csv> --test subject_v1` still generated campaign labels without the test suffix (e.g. `hot_A` instead of `hot_A_subject_v1`), causing all 707 leads to fail routing.
+- *Root cause:* `batchTestName` was resolved only from the CSV rows (`rows.find(r => r.testName)?.testName`). When a batch CSV was prepared without `--test`, the CSV has an empty `testName` column. The CLI `--test` argument was never consulted as a fallback.
+- *Why this matters:* When you run `prepare-batch.js` standalone (without `--test`), the output CSV has no testName. The push step then needs the `--test` flag to resolve campaign names. Without the fallback, it silently fails to match any campaign and aborts.
+- *Fix:* Changed the resolution line to: `rows.find(r => r.testName)?.testName || opts.testName || getArg('--test') || ''`
+- *File:* `scripts/push-to-instantly.js` line ~257
+
+**Bug 3: Weekly pipeline not enforcing ramp limits**
+- *Symptom:* `prepare-batch.js` was applying a 1,200/week limit (steady state) instead of the correct week-1 limit of 900/week. This meant the pipeline would push more leads than the inbox ramp supports during the critical warm-up period.
+- *Root cause:* `run-pipeline.js` called `prepareBatch()` without passing `campaignStart`. Without a start date, `rampBatchLimit()` defaults to the steady-state maximum. The campaign start date was never threaded through from config to the prepare step.
+- *Why the ramp matters:* Sending too many emails per inbox per day during warm-up triggers spam filters. ISPs rate-limit new sending domains, so exceeding the ramp during weeks 1-2 can permanently damage deliverability for all 6 inboxes.
+- *Fix:* Added `CAMPAIGN_START_DATE=2026-03-10` to `.env`. `run-pipeline.js` now reads this via `process.env.CAMPAIGN_START_DATE` and passes it to `prepareBatch` as `campaignStart`. The ramp is now automatically enforced based on how many weeks have elapsed since campaign start.
+- *Files:* `scripts/run-pipeline.js`, `.env`
+
+**Bug 4: No enrichment freshness gate**
+- *Symptom:* Leads could sit in `scored` state for days or weeks after enrichment before being pushed. When eventually pushed, the `{{hookText}}` personalizations referenced stale LinkedIn/Instagram activity.
+- *Root cause:* `prepare-batch.js` had no concept of when a lead was enriched. It would happily queue leads imported a week ago alongside leads imported today.
+- *Why freshness matters:* Hot and High tier emails open with a personalized hook referencing specific recent activity ("I saw you posted about X last week"). If the post was actually 10 days ago, the hook reads as stale and loses credibility. The 2-day window ensures the enrichment data is recent enough to feel genuine.
+- *Fix:*
+  1. Added `enrichedAt` field to the Twenty CRM schema (`setup-twenty-fields.js`)
+  2. `bulk-import-twenty.js` now sets `enrichedAt` on every import (from `linkedin_enriched_at` in the enriched CSV, or falls back to import timestamp)
+  3. `prepare-batch.js` filters out leads where `enrichedAt` is older than `ENRICHMENT_MAX_AGE_DAYS` (2). Filtered leads stay `scored` and are picked up on the next full pipeline run.
+  4. Legacy leads (no `enrichedAt` value) pass through without filtering to avoid breaking existing data.
+- *Files:* `scripts/lib/constants.js`, `scripts/lib/twenty-client.js`, `scripts/setup-twenty-fields.js`, `scripts/prepare-batch.js`
+
+---
+
 ## Discloser Value Propositions
 
 These are the core value props that all email copy is built on. Each email in the sequence leads with a different one.
@@ -652,14 +748,58 @@ These are the core value props that all email copy is built on. Each email in th
 
 6. **Think like a real estate agent** — The product is built for how agents actually work: between showings, on mobile, under time pressure. Not a generic AI tool repurposed for real estate.
 
-### How value props map to the email sequence
+### Value props deployment tracker
+
+| # | Value Prop | Email Language | Variant | Email # | Scheduled | Sent | Hot | High | Medium |
+|---|-----------|---------------|---------|---------|-----------|------|-----|------|--------|
+| 1 | **ChatGPT falls short** | "Have you tried uploading disclosures to ChatGPT? It works for the first couple docs, but by the 3rd or 4th it starts losing context and giving you generic answers." | A | 1 (opener) | 2026-03-11 | — | 50% | 50% | 50% |
+| 2 | **Speed + cost estimates** | "247 pages. Full analysis back in under 3 minutes — every finding ranked by severity, with repair cost estimates attached. Foundation crack? You see a dollar range." | B | 1 (opener) | 2026-03-11 | — | 50% | 50% | 50% |
+| 3 | **Chat with docs / between showings** | "You can chat with the documents. Ask anything about the property and get answers with inline citations, right back to the source page. Works well between showings." | A | 2 | 2026-03-14 | — | 50% | 50% | 50% |
+| 4 | **Full packet upload** | "Takes the entire packet at once — seller disclosure, inspection, pest report, all of it. Keeps context across every document so findings get cross-referenced." | B | 2 | 2026-03-14 | — | 50% | 50% | 50% |
+| 5 | **Cost estimates / negotiation** | "Repair cost estimates for every finding. Foundation crack on page 47? You see a range. Walk into a negotiation knowing what things actually cost." | A | 3 | 2026-03-19 | — | 50% | 50% | 50% |
+| 6 | **Chat with docs / between showings** | (same as #3 — appears in both variants at different positions) | B | 3 | 2026-03-19 | — | 50% | 50% | 50% |
+| 7 | **Breakup (ChatGPT callback)** | "Next time you get a 200-page disclosure packet, run it through Discloser before the inspection." | A | 4 | 2026-03-24 | — | 50% | 50% | 50% |
+| 8 | **Breakup (speed callback)** | "Next time a 200-page disclosure packet hits your desk, upload it to Discloser. Full breakdown in under 3 minutes, repair costs included." | B | 4 | 2026-03-24 | — | 50% | 50% | 50% |
+| 9 | **Set the stage for buyers** | "Send the analysis to your buyer clients before the showing. Plain-English summary, every finding ranked by severity, repair cost estimates, what to ask during inspection." | C | C1 | TBD* | — | 100% | — | — |
+| 10 | **Soft close (nurture)** | "Next time you're staring at a thick disclosure packet, give Discloser a shot. Two minutes, full breakdown, first property free." | C | C2 | TBD* | — | 100% | — | — |
+| 11 | **Timing check (followup)** | "We connected a few weeks back about disclosure reviews. Wanted to check if the timing is better now." | D | D1 | TBD* | — | 100% | — | — |
+
+**Schedule basis:** Batch 1 (345 leads) pushed 2026-03-10, campaigns activated same day. First send window: Tue 2026-03-11 9-11am PT. Delays are calendar days (day 0, +3, +8, +13). All send dates fall Mon-Fri.
+
+\* Nurture (C) and soft followup (D) trigger after first sequence completes + cooldown. Earliest eligible: ~2026-04-07 (14-day sequence + 17-day cooldown). Update **Sent** column as emails go out — `sync-status.js` tracks delivery timestamps.
+
+**Not yet deployed:**
+- "Less time reading, more time selling" (upload takes 2 min, replaces hours of review)
+- "Think like a real estate agent" (built for how agents work: between showings, on mobile, under time pressure)
+
+These are reserved for future A/B tests or sequence iterations.
+
+---
+
+### How value props map to the email sequence (A/B test)
+
+**Variant A: ChatGPT comparison opener** — Tests whether agents respond to "ChatGPT falls short" framing.
 
 | Email | Day | Value Prop | Angle |
 |-------|-----|-----------|-------|
-| 1 | 0 | ChatGPT falls short | Hook — "have you tried uploading disclosures to ChatGPT?" |
-| 2 | +3 | Chat with docs / between showings | Value add — "you can chat with the documents" |
-| 3 | +8 | Cost estimates / negotiation leverage | Proof — "walk in with numbers instead of guesses" |
-| 4 | +13 | (breakup) | Direct close — action-oriented, references a specific use case |
+| A1 | 0 | ChatGPT falls short | Hook — "have you tried uploading disclosures to ChatGPT?" |
+| A2 | +3 | Chat with docs / between showings | Value add — "you can chat with the documents" |
+| A3 | +8 | Cost estimates / negotiation leverage | Proof — "walk in with numbers instead of guesses" |
+| A4 | +13 | (breakup) | Direct close — action-oriented, references a specific use case |
+
+**Variant B: Speed + cost estimates opener** — Tests whether agents respond to "3 minutes, costs included" framing.
+
+| Email | Day | Value Prop | Angle |
+|-------|-----|-----------|-------|
+| B1 | 0 | Speed + cost estimates | Hook — "247 pages, full analysis in under 3 minutes, repair costs attached" |
+| B2 | +3 | Full packet upload / context | Value add — "upload the entire packet at once, cross-references everything" |
+| B3 | +8 | Chat with docs / between showings | Proof — "chat with documents, inline citations" |
+| B4 | +13 | (breakup) | Direct close — "full breakdown in 3 minutes, costs included" |
+
+**Re-engagement (same for all leads):**
+
+| Email | Day | Value Prop | Angle |
+|-------|-----|-----------|-------|
 | C1 | 0 | Set the stage for buyers | Different angle — "send the analysis to your buyer clients" |
 | C2 | +6 | (soft close) | Direct — "give Discloser a shot" |
 | D | 0 | (timing check) | "Wanted to check if the timing is better now" |

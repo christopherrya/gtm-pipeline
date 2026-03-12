@@ -49,6 +49,7 @@ function hasFlag(flag) {
 const region = getArg('--region');
 const mode = getArg('--mode') || 'first_touch';
 const testName = getArg('--test');
+const campaignStart = getArg('--campaign-start') || process.env.CAMPAIGN_START_DATE || '';
 const approveRunId = getArg('--approve');
 const resumeRunId = getArg('--resume');
 const fromStep = getArg('--from-step');
@@ -291,7 +292,7 @@ async function handleNewRun() {
 
   log.info('Pipeline run started', { runId, region, mode, testName, dryRun, autoMode, fullPipeline });
 
-  const ctx = { region, mode, testName, dryRun, selectLimit, selectMinScore };
+  const ctx = { region, mode, testName, dryRun, selectLimit, selectMinScore, campaignStart };
   const startIdx = fullPipeline ? 0 : STEPS.indexOf('prepare');
   await executeSteps(tracker, log, ctx, startIdx, null, null);
 }
@@ -358,6 +359,7 @@ async function executeSteps(tracker, log, ctx, startIdx, existingBatchCsv, exist
         region: ctx.region,
         mode: ctx.mode,
         testName: ctx.testName,
+        campaignStart: ctx.campaignStart,
         dryRun: ctx.dryRun,
         log: prepareLog,
       }), tracker, log);

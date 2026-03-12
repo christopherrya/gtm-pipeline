@@ -22,7 +22,7 @@ import {
   toInt,
 } from './lib/twenty-client.js';
 import {
-  SUPPRESSED_STAGES, COOLDOWN_DAYS, SEQUENCE_DURATION_DAYS,
+  SUPPRESSED_STAGES, COOLDOWN_DAYS, SEQUENCE_DURATION_DAYS, ENRICHMENT_MAX_AGE_DAYS,
   icpTier, rampBatchLimit, isReEngageEligible,
 } from './lib/constants.js';
 import { createLogger } from './lib/logger.js';
@@ -94,7 +94,26 @@ async function prepareFirstTouchBatch(region, minScore, tierFilter, testName, lo
   });
   log.info('Suppression applied', { suppressed: suppressedCount, testDups: testDupCount, eligible: candidates.length });
 
-  return { candidates, suppressedCount };
+  // Enrichment freshness gate — leads must have been enriched within ENRICHMENT_MAX_AGE_DAYS.
+  // Stale leads are left as 'scored' in the CRM so the next full pipeline run re-enriches them.
+  let staleCount = 0;
+  candidates = candidates.filter((p) => {
+    if (!p.enrichedAt) return true; // legacy lead with no enrichedAt — let through
+    const ageDays = (now - new Date(p.enrichedAt).getTime()) / 86400000;
+    if (ageDays > ENRICHMENT_MAX_AGE_DAYS) {
+      staleCount++;
+      return false;
+    }
+    return true;
+  });
+  if (staleCount > 0) {
+    log.warn('Stale leads skipped — enrichment too old', { staleCount, maxAgeDays: ENRICHMENT_MAX_AGE_DAYS });
+    console.warn(`\n  ⚠ ${staleCount} leads skipped: enrichment is older than ${ENRICHMENT_MAX_AGE_DAYS} days.`);
+    console.warn(`    They remain 'scored' and will be re-enriched on the next full pipeline run.\n`);
+  }
+  log.info('After freshness filter', { count: candidates.length });
+
+  return { candidates, suppressedCount, staleCount };
 }
 
 async function prepareNurtureBatch(region, log) {

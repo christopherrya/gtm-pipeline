@@ -122,7 +122,7 @@ function buildSchedule() {
 // Sequence copy — tier-specific, A/B subject lines
 // ---------------------------------------------------------------------------
 
-// Subject lines per variant (A = direct/benefit, B = curiosity/question)
+// Subject lines per variant (A = ChatGPT comparison, B = speed + cost estimates)
 const SUBJECTS = {
   hot: {
     A: [
@@ -132,10 +132,10 @@ const SUBJECTS = {
       "{{firstName}}, almost missed what's on page 47",
     ],
     B: [
-      '{{firstName}}, still using ChatGPT for disclosures?',
-      '{{firstName}}, have your disclosures analyzed between showings',
-      "Here's what to negotiate from that inspection, {{firstName}}",
-      '{{firstName}}, one more thing about those repair costs',
+      '{{firstName}}, 247 pages analyzed in under 3 minutes',
+      '{{firstName}}, no more splitting disclosure docs',
+      '{{firstName}}, chat with your disclosures between showings',
+      '{{firstName}}, last note about that disclosure packet',
     ],
   },
   high: {
@@ -146,10 +146,10 @@ const SUBJECTS = {
       '{{firstName}}, ran the numbers on your next disclosure',
     ],
     B: [
-      '{{firstName}}, ChatGPT missed this in your last disclosure',
-      '{{firstName}}, analyze your full packet between showings',
-      'Walk into that negotiation with real numbers, {{firstName}}',
-      "Here's what the inspection missed, {{firstName}}",
+      '{{firstName}}, what that foundation crack actually costs',
+      '{{firstName}}, upload the full packet — no splitting',
+      '{{firstName}}, chat with your disclosures between showings',
+      "Here's the 3-minute version, {{firstName}}",
     ],
   },
   medium: {
@@ -160,10 +160,10 @@ const SUBJECTS = {
       "{{firstName}}, here's what that foundation crack actually means",
     ],
     B: [
-      '{{firstName}}, ChatGPT quit after page 3',
-      '{{firstName}}, get your disclosures reviewed between showings',
-      "Here's what that repair should actually cost, {{firstName}}",
-      "{{firstName}}, here's an edge for your next negotiation",
+      '{{firstName}}, every finding with a cost estimate attached',
+      '{{firstName}}, no more splitting disclosure docs',
+      '{{firstName}}, chat with your disclosures between showings',
+      '{{firstName}}, 3 minutes from upload to full breakdown',
     ],
   },
 };
@@ -171,8 +171,8 @@ const SUBJECTS = {
 // Signature appended to every email
 const SIGNATURE = `\n—\n{{sender_name}}\nDiscloser | Smarter property disclosures\ndiscloser.co`;
 
-// Email bodies per tier — 4 emails for first touch
-const BODIES = {
+// Email bodies — Variant A: ChatGPT comparison
+const BODIES_A = {
   hot: [
     // Email 1: The Hook — personalized with hookText
     `Hi {{firstName}},
@@ -286,6 +286,119 @@ First property is free — discloser.co${SIGNATURE}`,
   ],
 };
 
+// Email bodies — Variant B: Speed + cost estimates
+const BODIES_B = {
+  hot: [
+    // Email 1: Hook — speed + cost estimates (personalized)
+    `Hi {{firstName}},
+
+{{hookText}}
+
+Last disclosure packet I ran through Discloser was 247 pages. Full analysis back in under 3 minutes — every finding ranked by severity, with repair cost estimates attached.
+
+Foundation crack on page 182? You see a dollar range. Roof issue in the inspection report? Same thing. Walk into the negotiation knowing what things actually cost.
+
+First property is free. Takes 2 minutes to upload.${SIGNATURE}`,
+
+    // Email 2: Full packet upload
+    `Hi {{firstName}},
+
+Most tools make you upload disclosure documents one at a time. By the 3rd or 4th, you're managing separate conversations and losing track of which doc said what.
+
+Discloser takes the entire packet at once — seller disclosure, inspection, pest report, all of it. Keeps context across every document so findings from one get cross-referenced against the others.
+
+Try it on a current deal. First property is free.${SIGNATURE}`,
+
+    // Email 3: Chat with docs
+    `Hi {{firstName}},
+
+One more thing about Discloser — after the analysis, you can chat with the documents. Ask anything about the property and get answers with inline citations, right back to the source page.
+
+Compare what the seller disclosure says against the inspection report. Pull up a specific clause between showings. Everything stays in context.
+
+First property is free.${SIGNATURE}`,
+
+    // Email 4: Breakup
+    `Hi {{firstName}},
+
+Last one from me. Next time a 200-page disclosure packet hits your desk, upload it to Discloser. Full breakdown in under 3 minutes, repair costs included.
+
+First property is free — discloser.co${SIGNATURE}`,
+  ],
+
+  high: [
+    // Email 1: Hook — speed + cost estimates (uses {{company}})
+    `Hi {{firstName}},
+
+Agents at {{company}} review a lot of disclosure packets. Most spend hours reading through them manually, or upload a few pages to ChatGPT and hope for the best.
+
+Discloser reads the full packet in under 3 minutes. Every finding ranked by severity. Repair cost estimates attached — foundation issue, roof concern, whatever it finds, you see a dollar range.
+
+First property is free. Takes 2 minutes to upload.${SIGNATURE}`,
+
+    // Email 2: Full packet upload
+    `Hi {{firstName}},
+
+Most tools make you upload disclosure documents one at a time. By the 3rd or 4th, you're managing separate conversations and context is gone.
+
+Discloser takes the full packet at once — seller disclosure, inspection, pest report, all of it. Cross-references findings across every document automatically.
+
+First property is free.${SIGNATURE}`,
+
+    // Email 3: Chat with docs
+    `Hi {{firstName}},
+
+After uploading disclosures to Discloser, you can chat with the documents. Ask anything about the property and get answers with citations back to the source page.
+
+Works well between showings. Compare the seller disclosure against the inspection report. Pull up a specific clause. Everything stays in context.
+
+First property is free.${SIGNATURE}`,
+
+    // Email 4: Breakup
+    `Hi {{firstName}},
+
+Last note from me. Next disclosure packet that lands on your desk — upload it to Discloser. Full breakdown in 3 minutes, costs included.
+
+First property is free — discloser.co${SIGNATURE}`,
+  ],
+
+  medium: [
+    // Email 1: Hook — speed + cost estimates (universal)
+    `Hi {{firstName}},
+
+The last disclosure packet I ran through Discloser was 247 pages. Full analysis came back in under 3 minutes — every finding ranked by severity, with estimated repair costs attached.
+
+Foundation crack buried in the report? You see a dollar range. Roof issue? Same thing. You walk into the negotiation knowing what things actually cost instead of guessing.
+
+First property is free. Takes 2 minutes to upload.${SIGNATURE}`,
+
+    // Email 2: Full packet upload
+    `Hi {{firstName}},
+
+One thing about Discloser — it takes the entire disclosure packet at once. Seller disclosure, inspection report, pest report, all of it. No splitting documents into separate uploads.
+
+It cross-references findings across every document automatically, so nothing falls through the cracks between reports.
+
+First property is free.${SIGNATURE}`,
+
+    // Email 3: Chat with docs
+    `Hi {{firstName}},
+
+After uploading disclosures to Discloser, you can chat with the documents. Ask anything about the property and get answers with inline citations — right back to the source page.
+
+Compare the seller disclosure against the inspection report between showings. Pull up a specific clause. Full context across the entire packet.
+
+First property is free.${SIGNATURE}`,
+
+    // Email 4: Breakup
+    `Hi {{firstName}},
+
+Last one from me. Next time a disclosure packet slows down a deal, run it through Discloser. Full breakdown in 3 minutes, repair costs included.
+
+First property is free — discloser.co${SIGNATURE}`,
+  ],
+};
+
 /**
  * Convert plain text email body to HTML for Instantly.
  * Double newlines become paragraph breaks, single newlines become <br>.
@@ -300,7 +413,8 @@ function toHtml(text) {
 function firstTouchSequence(variant, tierName) {
   const t = tierName?.toLowerCase() || 'medium';
   const subjects = SUBJECTS[t]?.[variant] || SUBJECTS.medium[variant] || SUBJECTS.medium.A;
-  const bodies = BODIES[t] || BODIES.medium;
+  const bodiesMap = variant === 'B' ? BODIES_B : BODIES_A;
+  const bodies = bodiesMap[t] || bodiesMap.medium;
 
   // Email 1 uses personalized subject + hook (populated by personalize-batch.js)
   // Falls back to static subject/hookText if personalized vars are empty

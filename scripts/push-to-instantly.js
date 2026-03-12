@@ -254,7 +254,7 @@ export async function main(opts = {}) {
 
   // Fetch campaign map from Instantly and resolve each lead's campaign
   const campaignNameMap = await fetchCampaignMap(log);
-  const batchTestName = rows.find((r) => r.testName)?.testName || '';
+  const batchTestName = rows.find((r) => r.testName)?.testName || opts.testName || getArg('--test') || '';
 
   // Group leads by resolved campaign
   const leadsByCampaign = new Map(); // campaignId -> { label, leads[] }

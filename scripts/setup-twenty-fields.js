@@ -66,6 +66,7 @@ const FIELD_SPEC = [
   { name: 'igSoldPostsCount',    label: 'IG Sold Posts Count',    type: 'NUMBER' },
 
   // ── Event timestamps (tracking when each milestone happened) ────────
+  { name: 'enrichedAt',           label: 'Enriched At',             type: 'TEXT' },
   { name: 'firstContactedAt',     label: 'First Contacted At',      type: 'TEXT' },
   { name: 'emailOpenedAt',        label: 'Email Opened At',         type: 'TEXT' },
   { name: 'repliedAt',            label: 'Replied At',              type: 'TEXT' },

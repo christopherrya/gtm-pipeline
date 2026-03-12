@@ -113,14 +113,11 @@ async function syncOnce() {
     return;
   }
 
-  // Load contacts from Twenty that have an instantlyCampaignId
+  // Load contacts from Twenty that have an instantlyCampaignId.
+  // Filter client-side: Twenty rejects neq with an empty string value.
   console.log('  Loading contacts with Instantly campaign IDs...');
-  const filter = {
-    and: [
-      { instantlyCampaignId: { neq: '' } },
-    ],
-  };
-  const people = await paginateAll('people', filter);
+  const allPeople = await paginateAll('people');
+  const people = allPeople.filter((p) => !!p.instantlyCampaignId);
   log.info('Contacts linked to Instantly loaded', { count: people.length });
 
   if (people.length === 0) {

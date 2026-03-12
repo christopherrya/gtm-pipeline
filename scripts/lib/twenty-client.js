@@ -325,6 +325,7 @@ export function contactToTwentyPerson(contact, companyId = null) {
     igSoldPostsCount: toInt(contact.ig_sold_posts_count || contact.ig_sold_posts || contact.igSoldPostsCount),
     externalLeadId: contact.external_lead_id || '',
     leadSource: contact.source_primary || contact.leadSource || 'Clay',
+    enrichedAt: contact.linkedin_enriched_at || contact.ig_enriched_at || contact.enriched_at || new Date().toISOString(),
     // New fields (8)
     region: contact.region || extractRegion(rawLocation),
     abVariant: contact.abVariant || contact.ab_variant || '',

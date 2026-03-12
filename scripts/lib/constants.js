@@ -86,6 +86,7 @@ export const BATCH_SIZE = 60;
 export const RATE_LIMIT_PER_MIN = 100;
 export const COOLDOWN_DAYS = 14;
 export const SEQUENCE_DURATION_DAYS = 14; // 4-email drip runs 10-14 days
+export const ENRICHMENT_MAX_AGE_DAYS = 2;  // leads must be enriched within this window before push
 
 // Re-engagement rules — cooldown in days before eligible for re-enrichment + new campaign
 export const RE_ENGAGE_RULES = {

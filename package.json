@@ -34,7 +34,9 @@
     "sync:once": "node scripts/sync-status.js --once",
     "launchd:install": "node scripts/install-launchd.js",
     "launchd:uninstall": "node scripts/install-launchd.js --uninstall",
-    "launchd:status": "node scripts/install-launchd.js --status"
+    "launchd:status": "node scripts/install-launchd.js --status",
+    "leads:reset-queued": "node scripts/reset-queued-leads.js",
+    "leads:reset-queued:dry": "node scripts/reset-queued-leads.js --dry-run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
