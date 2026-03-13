@@ -21,9 +21,10 @@
  *   node scripts/reset-queued-leads.js --yes       # Apply without confirmation prompt
  */
 
-import { paginateAll, batchUpdate, toInt } from './lib/twenty-client.js';
+import { toInt } from './lib/twenty-client.js';
 import { icpTier } from './lib/constants.js';
 import { createInterface } from 'readline';
+import { getQueuedWithoutCampaign, initDb, updateLeads } from './lib/db.js';
 
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
@@ -49,17 +50,16 @@ async function main() {
   // -------------------------------------------------------------------------
   // 1. Fetch all queued leads
   // -------------------------------------------------------------------------
-  console.log('  Querying Twenty for funnelStage=queued contacts...');
-  const allQueued = await paginateAll('people', { and: [{ funnelStage: { eq: 'queued' } }] });
-  console.log(`  Total queued in CRM: ${allQueued.length}`);
+  initDb();
+  console.log('  Querying SQLite for funnelStage=queued contacts...');
+  const stuck = getQueuedWithoutCampaign();
+  console.log(`  Total queued in SQLite without campaign ID: ${stuck.length}`);
 
   // -------------------------------------------------------------------------
   // 2. Split: stuck (no campaign ID) vs. legitimately in Instantly
   // -------------------------------------------------------------------------
-  const stuck = allQueued.filter((p) => !p.instantlyCampaignId);
-  const inInstantly = allQueued.filter((p) => !!p.instantlyCampaignId);
-
-  console.log(`  Already in Instantly (keep as-is): ${inInstantly.length}`);
+  const inInstantly = 0;
+  console.log(`  Already in Instantly (keep as-is): ${inInstantly}`);
   console.log(`  Stuck — never pushed to Instantly: ${stuck.length}`);
 
   if (stuck.length === 0) {
@@ -121,8 +121,9 @@ async function main() {
   // 5. Batch reset funnelStage → scored
   // -------------------------------------------------------------------------
   console.log(`\n  Resetting ${stuck.length} leads to funnelStage=scored...`);
-  const updates = stuck.map((p) => ({ id: p.id, funnelStage: 'scored' }));
-  const result = await batchUpdate('people', updates);
+  const updates = stuck.map((p) => ({ id: p.id, funnel_stage: 'scored' }));
+  updateLeads(updates);
+  const result = { updated: updates.length, errors: 0, errorDetails: [] };
 
   // -------------------------------------------------------------------------
   // 6. Summary

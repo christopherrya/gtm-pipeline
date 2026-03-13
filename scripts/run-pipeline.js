@@ -22,14 +22,18 @@
 
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { spawn } from 'child_process';
+import { parse as parseCsv } from 'csv-parse/sync';
 import { createLogger } from './lib/logger.js';
 import { RunTracker } from './lib/run-tracker.js';
 import { sendFailureAlert, sendRunReport } from './lib/mailer.js';
 import { main as prepareBatch } from './prepare-batch.js';
 import { main as personalizeBatch } from './personalize-batch.js';
 import { main as pushToInstantly } from './push-to-instantly.js';
+import { findLeadById, initDb, updateLeads } from './lib/db.js';
+import { applyManifestToConfig, loadRunManifest } from './lib/run-manifest.js';
+import { buildPrePushReport, writePrePushReport } from './lib/prepush-report.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -49,23 +53,49 @@ function hasFlag(flag) {
 const region = getArg('--region');
 const mode = getArg('--mode') || 'first_touch';
 const testName = getArg('--test');
+const manifestPath = getArg('--manifest');
 const campaignStart = getArg('--campaign-start') || process.env.CAMPAIGN_START_DATE || '';
 const approveRunId = getArg('--approve');
 const resumeRunId = getArg('--resume');
 const fromStep = getArg('--from-step');
 const dryRun = hasFlag('--dry-run');
+const pushDryRun = hasFlag('--push-dry-run');
 const autoMode = hasFlag('--auto');
 const skipPersonalize = hasFlag('--skip-personalize');
 const maxCost = getArg('--max-cost') ? parseFloat(getArg('--max-cost')) : undefined;
 const fullPipeline = hasFlag('--full');
 const selectLimit = parseInt(getArg('--select-limit') || '500', 10) || 500;
 const selectMinScore = parseInt(getArg('--min-score') || '55', 10) || 55;
+const tierFilter = getArg('--tier') ? getArg('--tier').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean) : null;
+const prepareMinScore = parseInt(getArg('--prepare-min-score') || '50', 10) || 0;
 
 // Pipeline steps in order
 const STEPS = ['select', 'enrich', 'import', 'prepare', 'personalize', 'push'];
 const PUSH_MAX_RETRIES = 2;
 const PUSH_RETRY_DELAYS = [5000, 15000];
 const PROJECT_ROOT = resolve(__dirname, '..');
+initDb();
+
+function extractLeadIdsFromCsv(csvPath) {
+  if (!csvPath || !existsSync(csvPath)) return [];
+  const rows = parseCsv(readFileSync(csvPath, 'utf-8'), { columns: true, skip_empty_lines: true, trim: true });
+  return rows.map((row) => row.twentyId).filter(Boolean);
+}
+
+function resetQueuedBatch(csvPath, log) {
+  const ids = extractLeadIdsFromCsv(csvPath);
+  if (ids.length === 0) return 0;
+
+  const updates = ids
+    .map((id) => findLeadById(id))
+    .filter((lead) => lead && lead.funnel_stage === 'queued' && !lead.instantly_campaign_id)
+    .map((lead) => ({ id: lead.id, funnel_stage: 'scored' }));
+
+  if (updates.length === 0) return 0;
+  updateLeads(updates);
+  log.info('Rehearsal cleanup restored queued leads', { count: updates.length });
+  return updates.length;
+}
 
 // ---------------------------------------------------------------------------
 // Child process runner (for scripts that don't export main())
@@ -236,8 +266,18 @@ async function handleResume() {
     mode: summary.config.mode,
     testName: summary.config.testName,
     dryRun: summary.config.dryRun || false,
+    pushDryRun: summary.config.pushDryRun || false,
+    autoMode: summary.config.autoMode || false,
+    skipPersonalize: summary.config.skipPersonalize || false,
     selectLimit: summary.config.selectLimit || 500,
     selectMinScore: summary.config.selectMinScore || 55,
+    prepareMinScore: summary.config.prepareMinScore || 50,
+    tierFilter: summary.config.tierFilter || null,
+    campaignStart: summary.config.campaignStart || '',
+    maxCost: summary.config.maxCost,
+    strategyName: summary.config.strategyName || '',
+    strategyNotes: summary.config.strategyNotes || '',
+    allowUnenrichable: summary.config.allowUnenrichable || false,
   };
 
   // Find existing artifacts for context (skip upstream artifacts)
@@ -256,23 +296,36 @@ async function handleResume() {
 // ---------------------------------------------------------------------------
 
 async function handleNewRun() {
-  if (!region && !fullPipeline) {
-    console.error('Usage: node scripts/run-pipeline.js --region "SF Bay" [--mode first_touch] [--test name] [--dry-run] [--auto]');
-    console.error('       node scripts/run-pipeline.js --full --auto  (all regions)');
-    process.exit(1);
-  }
-
-  const tracker = new RunTracker();
-  const runId = await tracker.start({
+  const manifest = loadRunManifest(manifestPath);
+  const baseConfig = {
     region,
     mode,
     testName: testName || '',
     dryRun,
+    pushDryRun,
     autoMode,
     skipPersonalize,
     fullPipeline,
     selectLimit,
     selectMinScore,
+    prepareMinScore,
+    tierFilter,
+    campaignStart,
+    maxCost,
+    allowUnenrichable: false,
+  };
+  const effective = applyManifestToConfig(baseConfig, manifest);
+
+  if (!effective.region && !effective.fullPipeline) {
+    console.error('Usage: node scripts/run-pipeline.js --region "SF Bay" [--mode first_touch] [--test name] [--dry-run] [--auto]');
+    console.error('       node scripts/run-pipeline.js --full --auto  (all regions)');
+    console.error('       node scripts/run-pipeline.js --manifest strategy.json');
+    process.exit(1);
+  }
+
+  const tracker = new RunTracker();
+  const runId = await tracker.start({
+    ...effective,
   });
 
   const log = createLogger({ step: 'runner', runId });
@@ -280,20 +333,24 @@ async function handleNewRun() {
   console.log('═══════════════════════════════════════════════════════════');
   console.log(`  PIPELINE RUN — ${runId}`);
   console.log('═══════════════════════════════════════════════════════════');
-  if (fullPipeline) console.log(`  FULL PIPELINE (select → enrich → import → prepare → push)`);
-  console.log(`  Region:      ${region}`);
-  console.log(`  Mode:        ${mode}`);
-  if (testName) console.log(`  Test:        ${testName}`);
-  if (fullPipeline) console.log(`  Select:      limit=${selectLimit}, min-score=${selectMinScore}`);
-  if (dryRun) console.log(`  DRY RUN`);
-  if (autoMode) console.log(`  AUTO MODE (no approval gate)`);
-  if (skipPersonalize) console.log(`  SKIP PERSONALIZE`);
+  if (effective.fullPipeline) console.log(`  FULL PIPELINE (select → enrich → import → prepare → push)`);
+  console.log(`  Region:      ${effective.region}`);
+  console.log(`  Mode:        ${effective.mode}`);
+  if (effective.testName) console.log(`  Test:        ${effective.testName}`);
+  if (effective.strategyName) console.log(`  Strategy:    ${effective.strategyName}`);
+  if (effective.tierFilter?.length) console.log(`  Tiers:       ${effective.tierFilter.join(', ')}`);
+  if (effective.fullPipeline) console.log(`  Select:      limit=${effective.selectLimit}, min-score=${effective.selectMinScore}`);
+  console.log(`  Prepare:     min-score=${effective.prepareMinScore}`);
+  if (effective.dryRun) console.log(`  DRY RUN`);
+  if (effective.pushDryRun && !effective.dryRun) console.log(`  PUSH DRY RUN (real pipeline, no Instantly send)`);
+  if (effective.autoMode) console.log(`  AUTO MODE (no approval gate)`);
+  if (effective.skipPersonalize) console.log(`  SKIP PERSONALIZE`);
   console.log('');
 
-  log.info('Pipeline run started', { runId, region, mode, testName, dryRun, autoMode, fullPipeline });
+  log.info('Pipeline run started', { runId, ...effective });
 
-  const ctx = { region, mode, testName, dryRun, selectLimit, selectMinScore, campaignStart };
-  const startIdx = fullPipeline ? 0 : STEPS.indexOf('prepare');
+  const ctx = { ...effective };
+  const startIdx = effective.fullPipeline ? 0 : STEPS.indexOf('prepare');
   await executeSteps(tracker, log, ctx, startIdx, null, null);
 }
 
@@ -359,6 +416,8 @@ async function executeSteps(tracker, log, ctx, startIdx, existingBatchCsv, exist
         region: ctx.region,
         mode: ctx.mode,
         testName: ctx.testName,
+        minScore: ctx.prepareMinScore,
+        tierFilter: ctx.tierFilter,
         campaignStart: ctx.campaignStart,
         dryRun: ctx.dryRun,
         log: prepareLog,
@@ -376,18 +435,18 @@ async function executeSteps(tracker, log, ctx, startIdx, existingBatchCsv, exist
     }
 
     // Step: personalize
-    if (startIdx <= STEPS.indexOf('personalize') && !skipPersonalize) {
+    if (startIdx <= STEPS.indexOf('personalize') && !ctx.skipPersonalize) {
       const persLog = createLogger({ step: 'personalize', runId: tracker.runId });
       const persResult = await runStep('personalize', () => personalizeBatch({
         csvPath: batchCsvPath,
         dryRun: ctx.dryRun,
-        maxCost: maxCost,
+        maxCost: ctx.maxCost,
         log: persLog,
       }), tracker, log);
 
       personalizedCsvPath = persResult?.csvPath;
       if (personalizedCsvPath) tracker.addArtifact(personalizedCsvPath);
-    } else if (skipPersonalize && startIdx <= STEPS.indexOf('personalize')) {
+    } else if (ctx.skipPersonalize && startIdx <= STEPS.indexOf('personalize')) {
       // Skip personalize — use the batch CSV directly
       personalizedCsvPath = batchCsvPath;
       tracker.stepStart('personalize');
@@ -395,14 +454,23 @@ async function executeSteps(tracker, log, ctx, startIdx, existingBatchCsv, exist
       log.info('Personalize step skipped');
     }
 
-    // Approval gate (unless --auto or --dry-run)
-    if (!autoMode && !ctx.dryRun && startIdx <= STEPS.indexOf('personalize')) {
+    const reportPath = personalizedCsvPath
+      ? writePrePushReport(tracker.runDir, buildPrePushReport(personalizedCsvPath, ctx))
+      : null;
+    if (reportPath) tracker.addArtifact(reportPath);
+
+    // Approval gate (unless --auto, --dry-run, or push-disabled rehearsal)
+    if (!ctx.autoMode && !ctx.dryRun && !ctx.pushDryRun && startIdx <= STEPS.indexOf('personalize')) {
       tracker.writeApprovalRequired();
       console.log('\n═══════════════════════════════════════════════════════════');
       console.log('  APPROVAL REQUIRED');
       console.log('═══════════════════════════════════════════════════════════');
       console.log(`  Personalization complete. Review the batch CSV:`);
       console.log(`    ${personalizedCsvPath}`);
+      if (reportPath) {
+        console.log(`  Pre-push report:`);
+        console.log(`    ${reportPath}`);
+      }
       console.log(`\n  To approve and push to Instantly:`);
       console.log(`    node scripts/run-pipeline.js --approve ${tracker.runId}`);
       console.log(`\n  Run ID: ${tracker.runId}`);
@@ -417,10 +485,19 @@ async function executeSteps(tracker, log, ctx, startIdx, existingBatchCsv, exist
 
       await runStepWithRetry('push', () => pushToInstantly({
         csvPath: csvForPush,
-        dryRun: ctx.dryRun,
+        dryRun: ctx.dryRun || ctx.pushDryRun,
         log: pushLog,
         manifestDir: tracker.runDir,
       }), tracker, log, PUSH_MAX_RETRIES, PUSH_RETRY_DELAYS);
+
+      if (ctx.pushDryRun && !ctx.dryRun) {
+        const restored = resetQueuedBatch(batchCsvPath, log);
+        const pushStep = tracker.summary.steps.find((step) => step.step === 'push');
+        if (pushStep) {
+          pushStep.metrics = { ...(pushStep.metrics || {}), restored_to_scored: restored };
+          tracker._writeSummary();
+        }
+      }
     }
 
     await tracker.finish({ status: 'ok' });
@@ -466,6 +543,9 @@ function printRunSummary(summary) {
   console.log(`  Status:   ${summary.status === 'ok' ? 'SUCCESS' : summary.status.toUpperCase()}`);
   console.log(`  Duration: ${fmtDuration(summary.durationMs)}`);
   console.log(`  Region:   ${summary.config?.region || '—'}`);
+  if (summary.config?.strategyName) {
+    console.log(`  Strategy: ${summary.config.strategyName}`);
+  }
 
   if (summary.steps.length > 0) {
     console.log('\n  Steps:');

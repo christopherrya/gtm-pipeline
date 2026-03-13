@@ -1,0 +1,18 @@
+{
+  "name": "cold_e2e_test",
+  "notes": "Small end-to-end test using cold/low-tier leads. Enrichment may be sparse; rule-based personalization is acceptable.",
+  "region": null,
+  "mode": "first_touch",
+  "testName": "subject_v1",
+  "dryRun": false,
+  "autoMode": false,
+  "skipPersonalize": false,
+  "fullPipeline": true,
+  "selectLimit": 25,
+  "selectMinScore": 0,
+  "prepareMinScore": 0,
+  "tierFilter": ["low"],
+  "campaignStart": "",
+  "maxCost": 5,
+  "allowUnenrichable": true
+}

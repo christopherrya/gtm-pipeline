@@ -16,18 +16,17 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
+import crypto from 'crypto';
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { parse } from 'csv-parse/sync';
 import {
-  hasTwentyConfig,
-  batchUpdate,
   getEnv,
   withRetry,
-  toInt,
 } from './lib/twenty-client.js';
-import { BATCH_SIZE, getInboxPool, buildCampaignLabel } from './lib/constants.js';
+import { getInboxPool, buildCampaignLabel } from './lib/constants.js';
 import { createLogger } from './lib/logger.js';
+import { initDb, updateLeads } from './lib/db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -45,12 +44,13 @@ function hasFlag(flag) {
 }
 
 // ---------------------------------------------------------------------------
-// Instantly v2 API client
+// Instantly API clients — v2 for campaigns, v1 for lead push
 // ---------------------------------------------------------------------------
 
-const INSTANTLY_BASE = 'https://api.instantly.ai/api/v2';
+const INSTANTLY_V1_BASE = 'https://api.instantly.ai/api/v1';
+const INSTANTLY_V2_BASE = 'https://api.instantly.ai/api/v2';
 
-async function instantlyFetch(method, path, body) {
+async function v2Fetch(method, path, body) {
   const apiKey = getEnv('INSTANTLY_API_KEY');
   if (!apiKey) throw new Error('INSTANTLY_API_KEY not set in .env');
 
@@ -63,10 +63,36 @@ async function instantlyFetch(method, path, body) {
   };
   if (body && method !== 'GET') opts.body = JSON.stringify(body);
 
-  const response = await fetch(`${INSTANTLY_BASE}${path}`, opts);
+  const response = await fetch(`${INSTANTLY_V2_BASE}${path}`, opts);
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Instantly API ${method} ${path} failed: ${response.status} ${text}`);
+    throw new Error(`Instantly v2 ${method} ${path} failed: ${response.status} ${text}`);
+  }
+  return response.json();
+}
+
+async function v1LeadAdd(leads, campaignId) {
+  const orgAuth = getEnv('INSTANTLY_ORG_AUTH');
+  if (!orgAuth) throw new Error('INSTANTLY_ORG_AUTH not set in .env (get from Instantly UI x-org-auth header)');
+
+  const response = await fetch(`${INSTANTLY_V1_BASE}/lead/add`, {
+    method: 'POST',
+    headers: {
+      'x-org-auth': orgAuth,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      leads,
+      campaign_id: campaignId,
+      skip_if_in_campaign: true,
+      skip_if_in_workspace: false,
+      verifyLeadsOnImport: false,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`v1/lead/add failed: ${response.status} ${text}`);
   }
   return response.json();
 }
@@ -76,7 +102,7 @@ async function instantlyFetch(method, path, body) {
  */
 async function fetchCampaignMap(log) {
   log.info('Fetching campaign list from Instantly');
-  const result = await withRetry(() => instantlyFetch('GET', '/campaigns?limit=100'), 2, [3000, 10000]);
+  const result = await withRetry(() => v2Fetch('GET', '/campaigns?limit=100'), 2, [3000, 10000]);
   const campaigns = result?.items || result?.data || result || [];
 
   const map = new Map();
@@ -108,16 +134,17 @@ function resolveCampaignId(row, campaignNameMap, testName) {
 }
 
 async function pushLeadsToCampaign(campaignId, leads, log) {
-  // Instantly v2 API has no bulk endpoint — POST /leads accepts one lead at a time
-  const results = { pushed: 0, errors: 0, errorDetails: [] };
-  for (const lead of leads) {
-    const payload = {
+  // v1 /lead/add supports bulk (up to ~100 per call)
+  const CHUNK_SIZE = 100;
+  const results = { pushed: 0, skipped: 0, errors: 0, errorDetails: [] };
+
+  for (let i = 0; i < leads.length; i += CHUNK_SIZE) {
+    const chunk = leads.slice(i, i + CHUNK_SIZE);
+    const v1Leads = chunk.map(lead => ({
       email: lead.email,
-      campaign_id: campaignId,
       first_name: lead.first_name || '',
       last_name: lead.last_name || '',
       company_name: lead.company_name || '',
-      assigned_sender: lead._assignedInbox || undefined,
       custom_variables: {
         icp_score: String(lead.icp_score || ''),
         icp_tier: lead.icp_tier || '',
@@ -131,18 +158,23 @@ async function pushLeadsToCampaign(campaignId, leads, log) {
         personalized_subject: lead.personalized_subject || '',
         personalized_hook: lead.personalized_hook || lead.hook_text || '',
       },
-    };
+    }));
 
     try {
-      await withRetry(async () => {
-        await instantlyFetch('POST', '/leads', payload);
+      const result = await withRetry(async () => {
+        return v1LeadAdd(v1Leads, campaignId);
       }, 2, [3000, 10000]);
-      results.pushed += 1;
+
+      const uploaded = result.leads_uploaded || 0;
+      const alreadyIn = result.already_in_campaign || 0;
+      results.pushed += uploaded;
+      results.skipped += alreadyIn + (result.skipped_count || 0);
+      log.info(`Chunk ${Math.floor(i / CHUNK_SIZE) + 1}: ${uploaded} uploaded, ${alreadyIn} already in campaign, ${result.in_blocklist || 0} blocklisted`);
     } catch (err) {
-      log.error('Lead push failed', { campaignId, email: lead.email, error: err.message });
-      results.errors += 1;
+      log.error(`Chunk ${Math.floor(i / CHUNK_SIZE) + 1} FAILED`, { campaignId, error: err.message });
+      results.errors += chunk.length;
       if (results.errorDetails.length < 10) {
-        results.errorDetails.push(`${lead.email}: ${err.message}`);
+        results.errorDetails.push(`chunk ${Math.floor(i / CHUNK_SIZE) + 1}: ${err.message}`);
       }
     }
   }
@@ -247,9 +279,12 @@ export async function main(opts = {}) {
   console.log(`\nReading: ${fullPath}`);
   log.info('Batch loaded for push', { count: rows.length, mode: pushMode });
 
-  // Check Instantly API key
+  // Check Instantly API keys (v2 for campaigns, v1 org auth for lead push)
   if (!getEnv('INSTANTLY_API_KEY')) {
     throw new Error('INSTANTLY_API_KEY must be set in .env');
+  }
+  if (!getEnv('INSTANTLY_ORG_AUTH')) {
+    throw new Error('INSTANTLY_ORG_AUTH must be set in .env (get from Instantly UI x-org-auth header)');
   }
 
   // Fetch campaign map from Instantly and resolve each lead's campaign
@@ -330,37 +365,35 @@ export async function main(opts = {}) {
     for (const [cid, { label, leads }] of leadsByCampaign) {
       console.log(`  Would push ${leads.length} leads to "${label}" (${cid.slice(0, 8)}...)`);
     }
-    console.log(`  Would update ${routableRows.length} People in Twenty CRM`);
+    console.log(`  Would update ${routableRows.length} leads in SQLite`);
     return { metrics: { pushed: 0, errors: 0, crm_updated: 0, unresolved: unresolved.length } };
   }
 
-  // Push to Instantly — one lead at a time (v2 has no bulk endpoint)
+  // Push to Instantly via v1 /lead/add (bulk, chunks of 100)
   let totalPushed = 0;
   let totalErrors = 0;
-  const pushedEmails = new Set(); // Track which leads were actually pushed
+  const pushedEmails = new Set();
 
   for (const [campaignId, { label, leads }] of leadsByCampaign) {
     log.info(`Pushing to campaign "${label}"`, { campaignId, count: leads.length });
     const result = await pushLeadsToCampaign(campaignId, leads, log);
-    log.info(`Campaign "${label}" pushed`, { pushed: result.pushed, errors: result.errors });
+    log.info(`Campaign "${label}" pushed`, { pushed: result.pushed, skipped: result.skipped, errors: result.errors });
     totalPushed += result.pushed;
     totalErrors += result.errors;
-    // Mark successfully pushed leads
-    for (const lead of leads) {
-      // If total pushed for this campaign == leads.length, all went through
-      // Otherwise we can't be sure which ones failed without per-lead tracking
-      // For safety, only mark CRM as contacted if errors == 0 for the campaign
-      if (result.errors === 0) {
+    // v1 bulk: if no errors in the campaign, all leads were processed (uploaded or skipped)
+    if (result.errors === 0) {
+      for (const lead of leads) {
         pushedEmails.add(lead.email);
       }
     }
   }
 
-  // Update Twenty CRM — only for leads that were successfully pushed
+  // Update SQLite — only for leads that were successfully pushed
   let crmUpdated = 0;
   const campaignMap = new Map();
 
-  if (hasTwentyConfig() && pushedEmails.size > 0) {
+  initDb();
+  if (pushedEmails.size > 0) {
     const now = new Date().toISOString();
     const inboundDomain = getEnv('GTM_INBOUND_DOMAIN', 'inbound.discloser.co');
     const targetStage = isSoftFollowup ? 'contacted' : isNurture ? 'nurture' : 'contacted';
@@ -376,22 +409,22 @@ export async function main(opts = {}) {
 
         const update = {
           id: r.twentyId,
-          funnelStage: targetStage,
-          lastOutreachDate: now,
-          instantlyCampaignId: cid,
-          outreachStatus: 'sent',
-          abVariant: r.abVariant,
-          assignedInbox: r._assignedInbox || '',
-          campaignLabel: label,
+          funnel_stage: targetStage,
+          last_outreach_date: now,
+          instantly_campaign_id: cid,
+          outreach_status: 'sent',
+          ab_variant: r.abVariant,
+          assigned_inbox: r._assignedInbox || '',
+          campaign_label: label,
         };
         if (!isNurture && !isSoftFollowup) {
-          update.firstContactedAt = now;
+          update.first_contacted_at = now;
         }
         if (batchTestName) {
-          update.abTestName = batchTestName;
+          update.ab_test_name = batchTestName;
         }
         if (!isNurture) {
-          update.replyToAddress = `disclosure-${crypto.randomUUID()}@${inboundDomain}`;
+          update.reply_to_address = `disclosure-${crypto.randomUUID()}@${inboundDomain}`;
         }
         return update;
       });
@@ -402,10 +435,10 @@ export async function main(opts = {}) {
       writeManifest(manifestPath, routableRows, campaignMap);
     }
 
-    log.info('Updating Twenty CRM', { count: updates.length });
-    const updateResult = await batchUpdate('people', updates);
-    crmUpdated = updateResult.updated;
-    log.info('Twenty CRM updated', { updated: updateResult.updated, errors: updateResult.errors });
+    log.info('Updating SQLite', { count: updates.length });
+    updateLeads(updates);
+    crmUpdated = updates.length;
+    log.info('SQLite updated', { updated: updates.length, errors: 0 });
 
     // Mark manifest as complete
     if (manifestDir) {
@@ -429,7 +462,7 @@ export async function main(opts = {}) {
     console.log(`  Unresolved (skipped): ${unresolved.length}`);
   }
 
-  console.log(`\n  Twenty CRM updates:`);
+  console.log(`\n  SQLite updates:`);
   console.log(`    funnelStage -> '${isSoftFollowup ? 'contacted' : isNurture ? 'nurture' : 'contacted'}': ${routableRows.filter((r) => r.twentyId).length}`);
   console.log(`    lastOutreachDate set: ${routableRows.filter((r) => r.twentyId).length}`);
   console.log(`    instantlyCampaignId set: ${routableRows.filter((r) => r.twentyId).length}`);

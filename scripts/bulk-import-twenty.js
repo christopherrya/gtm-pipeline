@@ -14,17 +14,12 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { parse } from 'csv-parse/sync';
 import {
-  hasTwentyConfig,
-  loadEmailIdMap,
-  loadCompanyNameMap,
-  batchCreate,
-  batchUpdate,
-  upsertCompany,
-  contactToTwentyPerson,
   toInt,
 } from './lib/twenty-client.js';
 import { extractRegion, icpTier } from './lib/constants.js';
 import { createLogger } from './lib/logger.js';
+import { csvRowToLead } from './lib/lead-mappers.js';
+import { findLeadByEmail, initDb, insertLeads, upsertCompany } from './lib/db.js';
 
 const log = createLogger({ step: 'import' });
 
@@ -57,13 +52,10 @@ if (!csvPath) {
 
 async function main() {
   console.log('═══════════════════════════════════════════════════════════');
-  console.log('  BULK IMPORT TO TWENTY CRM');
+  console.log('  BULK IMPORT TO SQLITE');
   console.log('═══════════════════════════════════════════════════════════');
 
-  if (!hasTwentyConfig()) {
-    console.error('Error: TWENTY_BASE_URL and TWENTY_API_KEY must be set in .env');
-    process.exit(1);
-  }
+  initDb();
 
   // Parse CSV
   const fullPath = resolve(csvPath);
@@ -110,33 +102,26 @@ async function main() {
     return;
   }
 
-  // Load existing data from Twenty for dedup
-  console.log('\n  Loading existing People from Twenty...');
-  const emailIdMap = await loadEmailIdMap();
-  console.log(`  Found ${emailIdMap.size} existing People`);
-
-  console.log('  Loading existing Companies from Twenty...');
-  const companyMap = await loadCompanyNameMap();
-  console.log(`  Found ${companyMap.size} existing Companies`);
-
   // Extract unique companies and upsert
   const uniqueCompanies = new Set();
   for (const row of rows) {
     const name = row['Company Name'] || '';
     if (name) uniqueCompanies.add(name);
   }
-  console.log(`\n  Upserting ${uniqueCompanies.size} unique companies...`);
+  console.log(`\n  Upserting ${uniqueCompanies.size} unique companies into SQLite...`);
   let companiesCreated = 0;
+  const companyMap = new Map();
   for (const name of uniqueCompanies) {
-    const existed = companyMap.has(name.toLowerCase());
-    await upsertCompany(name, '', companyMap);
-    if (!existed && companyMap.has(name.toLowerCase())) companiesCreated++;
+    const companyId = upsertCompany(name, '');
+    companyMap.set(name.toLowerCase(), companyId);
+    if (companyId) companiesCreated++;
   }
   console.log(`  Companies created: ${companiesCreated}`);
 
-  // Split into create vs update
-  const toCreate = [];
-  const toUpdate = [];
+  // Upsert into SQLite
+  const upserts = [];
+  let created = 0;
+  let updated = 0;
   let skipped = 0;
 
   for (const row of rows) {
@@ -154,44 +139,27 @@ async function main() {
       row.funnel_stage = row.icp_score ? 'scored' : 'new';
     }
 
-    const person = contactToTwentyPerson(row, companyId);
-
-    if (emailIdMap.has(email)) {
-      toUpdate.push({ id: emailIdMap.get(email), ...person });
-    } else {
-      toCreate.push(person);
-    }
+    const existing = findLeadByEmail(email);
+    if (existing) updated++;
+    else created++;
+    upserts.push(csvRowToLead(row, {
+      id: existing?.id,
+      companyId,
+      region: row.region,
+    }));
   }
 
-  console.log(`\n  To create: ${toCreate.length}`);
-  console.log(`  To update: ${toUpdate.length}`);
+  console.log(`\n  To create: ${created}`);
+  console.log(`  To update: ${updated}`);
   console.log(`  Skipped (no email): ${skipped}`);
-
-  // Batch create
-  let createResult = { created: 0, errors: 0, errorDetails: [] };
-  if (toCreate.length > 0) {
-    console.log('\n  Batch creating People...');
-    createResult = await batchCreate('people', toCreate);
-    log.info('People created', { created: createResult.created, errors: createResult.errors });
-  }
-
-  // Batch update
-  let updateResult = { updated: 0, errors: 0, errorDetails: [] };
-  if (toUpdate.length > 0) {
-    console.log('  Batch updating People...');
-    updateResult = await batchUpdate('people', toUpdate);
-    log.info('People updated', { updated: updateResult.updated, errors: updateResult.errors });
-  }
+  insertLeads(upserts);
+  const createResult = { created, errors: 0, errorDetails: [] };
+  const updateResult = { updated, errors: 0, errorDetails: [] };
+  log.info('SQLite leads upserted', { created, updated });
 
   // Print summary
   printSummary(rows, emailCol, createResult, updateResult, skipped, companiesCreated);
 
-  // Print errors if any
-  const allErrors = [...createResult.errorDetails, ...updateResult.errorDetails];
-  if (allErrors.length > 0) {
-    console.log('\n  ERRORS (first 10):');
-    allErrors.slice(0, 10).forEach((e, i) => console.log(`    ${i + 1}. ${e}`));
-  }
 }
 
 function printDryRunSummary(rows, emailCol) {

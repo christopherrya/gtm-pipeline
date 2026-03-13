@@ -28,12 +28,12 @@ import { fileURLToPath } from 'url';
 import { parse } from 'csv-parse/sync';
 import { stringify } from 'csv-stringify/sync';
 import {
-  hasTwentyConfig,
-  loadEmailIdMap,
   toInt,
 } from './lib/twenty-client.js';
 import { extractRegion, icpTier } from './lib/constants.js';
 import { createLogger } from './lib/logger.js';
+import { initDb, loadAllEmails, insertLeads, insertPoolEmails } from './lib/db.js';
+import { csvRowToLead } from './lib/lead-mappers.js';
 
 const log = createLogger({ step: 'select' });
 
@@ -143,23 +143,19 @@ async function main() {
   console.log('  SELECT FROM POOL — Pick leads for enrichment');
   console.log('═══════════════════════════════════════════════════════════');
 
+  initDb();
+
   // Load all pool CSVs
   const allLeads = loadPool();
 
-  // Deduplicate against Twenty CRM
-  let crmEmails = new Set();
-  if (hasTwentyConfig()) {
-    console.log('\n  Loading existing contacts from Twenty CRM for dedup...');
-    const emailMap = await loadEmailIdMap();
-    crmEmails = new Set(emailMap.keys());
-    console.log(`  CRM contains ${crmEmails.size} contacts`);
-  } else {
-    console.log('\n  Warning: Twenty CRM not configured — skipping dedup');
-  }
+  // Deduplicate against SQLite
+  console.log('\n  Loading existing contacts from SQLite for dedup...');
+  const knownEmails = loadAllEmails();
+  console.log(`  SQLite contains ${knownEmails.size} known emails`);
 
   let crmDupCount = 0;
   let candidates = allLeads.filter((lead) => {
-    if (crmEmails.has(lead._email)) {
+    if (knownEmails.has(lead._email)) {
       crmDupCount++;
       return false;
     }
@@ -219,6 +215,20 @@ async function main() {
   if (selected.length === 0) {
     console.log('\n  No leads available for selection. Exiting.');
     return;
+  }
+
+  if (!dryRun) {
+    const poolSelectedAt = new Date().toISOString();
+    insertLeads(selected.map((lead) => csvRowToLead(lead, {
+      sourceFile: lead._sourceFile,
+      poolSelectedAt,
+      region: lead._region,
+    })));
+    insertPoolEmails(selected.map((lead) => ({
+      email: lead._email,
+      source_file: lead._sourceFile,
+      imported_at: poolSelectedAt,
+    })));
   }
 
   // Breakdown by tier

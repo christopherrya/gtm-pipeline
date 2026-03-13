@@ -11,9 +11,6 @@
  */
 
 import {
-  hasTwentyConfig,
-  paginateAll,
-  batchUpdate,
   getEnv,
   withRetry,
   toInt,
@@ -26,6 +23,7 @@ import {
   isReEngageEligible,
 } from './lib/constants.js';
 import { createLogger } from './lib/logger.js';
+import { abTestReport, findLeadsWithCampaignId, funnelSnapshot, initDb, updateLeads } from './lib/db.js';
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -108,16 +106,10 @@ async function syncOnce() {
   const startTime = Date.now();
   console.log(`\n  [${new Date().toISOString()}] Starting sync...`);
 
-  if (!hasTwentyConfig()) {
-    console.error('  Error: Twenty CRM not configured');
-    return;
-  }
+  initDb();
 
-  // Load contacts from Twenty that have an instantlyCampaignId.
-  // Filter client-side: Twenty rejects neq with an empty string value.
-  console.log('  Loading contacts with Instantly campaign IDs...');
-  const allPeople = await paginateAll('people');
-  const people = allPeople.filter((p) => !!p.instantlyCampaignId);
+  console.log('  Loading contacts with Instantly campaign IDs from SQLite...');
+  const people = findLeadsWithCampaignId();
   log.info('Contacts linked to Instantly loaded', { count: people.length });
 
   if (people.length === 0) {
@@ -176,17 +168,13 @@ async function syncOnce() {
       const currentStage = person.funnelStage || 'contacted';
       if (shouldUpdateStage(currentStage, newStage)) {
         const now = new Date().toISOString();
-        const update = {
-          id: person.id,
-          funnelStage: newStage,
-          outreachStatus: instantlyStatus,
-        };
+        const update = { id: person.id, funnel_stage: newStage, outreach_status: instantlyStatus };
         // Set event timestamps on first occurrence only
         if (newStage === 'opened' && !person.emailOpenedAt) {
-          update.emailOpenedAt = now;
+          update.email_opened_at = now;
         }
         if (newStage === 'replied' && !person.repliedAt) {
-          update.repliedAt = now;
+          update.replied_at = now;
         }
         updates.push(update);
         changesDetected++;
@@ -206,7 +194,7 @@ async function syncOnce() {
     if (verbose) {
       console.log(`\n  Sequence completions detected: ${sequenceUpdates.length}`);
       for (const u of sequenceUpdates) {
-        console.log(`    ${u._email}: ${u._fromStage} -> ${u.funnelStage}`);
+        console.log(`    ${u._email}: ${u._fromStage} -> ${u.funnel_stage}`);
       }
     }
   }
@@ -220,13 +208,11 @@ async function syncOnce() {
     }
   }
 
-  // Batch update Twenty
-  // Strip internal tracking fields before sending to API
   const cleanUpdates = updates.map(({ _email, _fromStage, ...rest }) => rest);
   if (cleanUpdates.length > 0) {
-    log.info('Applying CRM updates', { count: cleanUpdates.length });
-    const result = await batchUpdate('people', cleanUpdates);
-    log.info('CRM updates applied', { updated: result.updated, errors: result.errors });
+    log.info('Applying SQLite updates', { count: cleanUpdates.length });
+    updateLeads(cleanUpdates);
+    log.info('SQLite updates applied', { updated: cleanUpdates.length, errors: 0 });
   }
 
   // Print funnel report
@@ -257,8 +243,8 @@ function detectSequenceCompletions(people) {
       // Sent all emails, never opened a single one
       updates.push({
         id: person.id,
-        funnelStage: 'sequence_complete',
-        outreachStatus: 'sequence_complete_no_open',
+        funnel_stage: 'sequence_complete',
+        outreach_status: 'sequence_complete_no_open',
         _email: person.emails?.primaryEmail || '',
         _fromStage: stage,
       });
@@ -266,8 +252,8 @@ function detectSequenceCompletions(people) {
       // Opened but never replied — eligible for Campaign C (nurture)
       updates.push({
         id: person.id,
-        funnelStage: 'opened_no_reply',
-        outreachStatus: 'sequence_complete_no_reply',
+        funnel_stage: 'opened_no_reply',
+        outreach_status: 'sequence_complete_no_reply',
         _email: person.emails?.primaryEmail || '',
         _fromStage: stage,
       });
@@ -277,8 +263,8 @@ function detectSequenceCompletions(people) {
       if (daysSinceOutreach >= 10) {
         updates.push({
           id: person.id,
-          funnelStage: 'nurture_complete',
-          outreachStatus: 'nurture_complete_no_reply',
+          funnel_stage: 'nurture_complete',
+          outreach_status: 'nurture_complete_no_reply',
           _email: person.emails?.primaryEmail || '',
           _fromStage: stage,
         });
@@ -289,8 +275,8 @@ function detectSequenceCompletions(people) {
       if (daysSinceOutreach >= SEQUENCE_DURATION_DAYS + 14) {
         updates.push({
           id: person.id,
-          funnelStage: 'replied_went_cold',
-          outreachStatus: 'replied_went_cold',
+          funnel_stage: 'replied_went_cold',
+          outreach_status: 'replied_went_cold',
           _email: person.emails?.primaryEmail || '',
           _fromStage: stage,
         });
@@ -326,8 +312,8 @@ function detectReEngageReady(people) {
 
     updates.push({
       id: person.id,
-      funnelStage: 're_engage_ready',
-      outreachStatus: `re_engage_from_${stage}`,
+      funnel_stage: 're_engage_ready',
+      outreach_status: `re_engage_from_${stage}`,
       _email: person.emails?.primaryEmail || '',
       _fromStage: stage,
     });
@@ -343,16 +329,11 @@ async function printFunnelReport() {
   console.log('  ├────────────────────┼───────┤');
 
   let total = 0;
+  const counts = new Map(funnelSnapshot().map((row) => [row.stage, row.count]));
   for (const stage of FUNNEL_STAGES) {
-    const filter = { and: [{ funnelStage: { eq: stage } }] };
-    try {
-      const people = await paginateAll('people', filter);
-      const count = people.length;
-      total += count;
-      console.log(`  │ ${stage.padEnd(18)} │ ${String(count).padStart(5)} │`);
-    } catch {
-      console.log(`  │ ${stage.padEnd(18)} │   err │`);
-    }
+    const count = counts.get(stage) || 0;
+    total += count;
+    console.log(`  │ ${stage.padEnd(18)} │ ${String(count).padStart(5)} │`);
   }
 
   console.log('  ├────────────────────┼───────┤');
@@ -364,53 +345,25 @@ async function printFunnelReport() {
 }
 
 async function printTestReport() {
-  // Load all contacts with a test name
-  const filter = { and: [{ abTestName: { neq: '' } }] };
-  let people;
-  try {
-    people = await paginateAll('people', filter);
-  } catch {
-    return; // Field may not exist yet
-  }
-  if (people.length === 0) return;
-
-  // Group by test name
-  const byTest = {};
-  for (const p of people) {
-    const test = p.abTestName || '';
-    if (!test) continue;
-    if (!byTest[test]) byTest[test] = [];
-    byTest[test].push(p);
-  }
-
-  const testNames = Object.keys(byTest).sort();
+  const people = findLeadsWithCampaignId().filter((p) => p.abTestName);
+  const testNames = [...new Set(people.map((p) => p.abTestName))].sort();
   if (testNames.length === 0) return;
 
   console.log('\n  A/B TEST RESULTS:');
   for (const test of testNames) {
-    const contacts = byTest[test];
-
-    // Group by campaignLabel for per-label breakdown
-    const byLabel = {};
-    for (const p of contacts) {
-      const label = p.campaignLabel || `${(p.icpTier || '?')}_${p.abVariant || '?'}`;
-      if (!byLabel[label]) byLabel[label] = [];
-      byLabel[label].push(p);
-    }
-
-    const labels = Object.keys(byLabel).sort();
-
-    console.log(`\n  Test: "${test}" (${contacts.length} contacts)`);
+    const labels = abTestReport(test);
+    const sentTotal = labels.reduce((sum, row) => sum + row.sent, 0);
+    console.log(`\n  Test: "${test}" (${sentTotal} contacts)`);
     console.log('  ┌──────────────────────────────┬──────┬────────┬─────────┬─────────┬─────────┐');
     console.log('  │ Campaign Label               │ Sent │ Opened │ Replied │ Bounced │ Open  % │');
     console.log('  ├──────────────────────────────┼──────┼────────┼─────────┼─────────┼─────────┤');
 
-    for (const label of labels) {
-      const group = byLabel[label];
-      const sent = group.length;
-      const opened = group.filter((p) => ['opened', 'replied', 'opened_no_reply'].includes(p.funnelStage)).length;
-      const replied = group.filter((p) => ['replied', 'replied_went_cold'].includes(p.funnelStage)).length;
-      const bounced = group.filter((p) => p.funnelStage === 'bounced').length;
+    for (const row of labels) {
+      const label = row.campaign_label || '?';
+      const sent = row.sent;
+      const opened = row.opened;
+      const replied = row.replied;
+      const bounced = row.bounced;
       const openRate = sent > 0 ? ((opened / sent) * 100).toFixed(1) : '0.0';
 
       console.log(`  │ ${label.padEnd(28)} │ ${String(sent).padStart(4)} │ ${String(opened).padStart(6)} │ ${String(replied).padStart(7)} │ ${String(bounced).padStart(7)} │ ${openRate.padStart(5)}%  │`);

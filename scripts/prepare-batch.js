@@ -15,17 +15,14 @@ import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { stringify } from 'csv-stringify/sync';
 import {
-  hasTwentyConfig,
-  paginateAll,
-  batchUpdate,
-  hash,
   toInt,
 } from './lib/twenty-client.js';
 import {
-  SUPPRESSED_STAGES, COOLDOWN_DAYS, SEQUENCE_DURATION_DAYS, ENRICHMENT_MAX_AGE_DAYS,
   icpTier, rampBatchLimit, isReEngageEligible,
 } from './lib/constants.js';
 import { createLogger } from './lib/logger.js';
+import { initDb, findLeadsByStage, updateLeads } from './lib/db.js';
+import { assignAbVariant, getSuppressionReason } from './lib/lead-policy.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -47,9 +44,8 @@ function hasFlag(flag) {
 // ---------------------------------------------------------------------------
 
 async function prepareFirstTouchBatch(region, minScore, tierFilter, testName, log) {
-  log.info('Querying Twenty for scored contacts');
-  const filter = { and: [{ funnelStage: { eq: 'scored' } }] };
-  const allPeople = await paginateAll('people', filter);
+  log.info('Querying SQLite for scored contacts');
+  const allPeople = findLeadsByStage('scored');
   log.info('Scored contacts found', { count: allPeople.length });
 
   let candidates = allPeople.filter((p) => {
@@ -69,57 +65,29 @@ async function prepareFirstTouchBatch(region, minScore, tierFilter, testName, lo
 
   let suppressedCount = 0;
   let testDupCount = 0;
+  let staleCount = 0;
   const now = Date.now();
   candidates = candidates.filter((p) => {
-    if (SUPPRESSED_STAGES.includes(p.funnelStage)) {
-      suppressedCount++;
-      return false;
-    }
-    if (p.lastOutreachDate) {
-      const lastDate = new Date(p.lastOutreachDate).getTime();
-      if (!isNaN(lastDate) && (now - lastDate) / 86400000 < COOLDOWN_DAYS) {
-        suppressedCount++;
-        return false;
-      }
-    }
-    // Prevent re-entering the same A/B test
-    if (testName && p.abTestHistory) {
-      const history = p.abTestHistory.split(',').map((s) => s.trim());
-      if (history.includes(testName)) {
-        testDupCount++;
-        return false;
-      }
-    }
-    return true;
-  });
-  log.info('Suppression applied', { suppressed: suppressedCount, testDups: testDupCount, eligible: candidates.length });
-
-  // Enrichment freshness gate — leads must have been enriched within ENRICHMENT_MAX_AGE_DAYS.
-  // Stale leads are left as 'scored' in the CRM so the next full pipeline run re-enriches them.
-  let staleCount = 0;
-  candidates = candidates.filter((p) => {
-    if (!p.enrichedAt) return true; // legacy lead with no enrichedAt — let through
-    const ageDays = (now - new Date(p.enrichedAt).getTime()) / 86400000;
-    if (ageDays > ENRICHMENT_MAX_AGE_DAYS) {
-      staleCount++;
-      return false;
-    }
-    return true;
+    const reason = getSuppressionReason(p, { mode: 'first_touch', region, minScore, tierFilter, testName, now });
+    if (!reason) return true;
+    if (reason === 'test_dup') testDupCount++;
+    else if (reason === 'stale_enrichment') staleCount++;
+    else suppressedCount++;
+    return false;
   });
   if (staleCount > 0) {
-    log.warn('Stale leads skipped — enrichment too old', { staleCount, maxAgeDays: ENRICHMENT_MAX_AGE_DAYS });
-    console.warn(`\n  ⚠ ${staleCount} leads skipped: enrichment is older than ${ENRICHMENT_MAX_AGE_DAYS} days.`);
+    log.warn('Stale leads skipped — enrichment too old', { staleCount });
+    console.warn(`\n  ⚠ ${staleCount} leads skipped: enrichment is older than 2 days.`);
     console.warn(`    They remain 'scored' and will be re-enriched on the next full pipeline run.\n`);
   }
-  log.info('After freshness filter', { count: candidates.length });
+  log.info('Suppression applied', { suppressed: suppressedCount, testDups: testDupCount, staleCount, eligible: candidates.length });
 
   return { candidates, suppressedCount, staleCount };
 }
 
 async function prepareNurtureBatch(region, log) {
-  log.info('Querying Twenty for opened-no-reply contacts (nurture candidates)');
-  const filter = { and: [{ funnelStage: { eq: 'opened_no_reply' } }] };
-  const allPeople = await paginateAll('people', filter);
+  log.info('Querying SQLite for opened-no-reply contacts (nurture candidates)');
+  const allPeople = findLeadsByStage('opened_no_reply');
   log.info('Opened-no-reply contacts found', { count: allPeople.length });
 
   const candidates = allPeople.filter((p) => {
@@ -138,9 +106,8 @@ async function prepareNurtureBatch(region, log) {
 }
 
 async function prepareSoftFollowupBatch(region, log) {
-  log.info('Querying Twenty for replied-went-cold contacts (Campaign D candidates)');
-  const filter = { and: [{ funnelStage: { eq: 'replied_went_cold' } }] };
-  const allPeople = await paginateAll('people', filter);
+  log.info('Querying SQLite for replied-went-cold contacts (Campaign D candidates)');
+  const allPeople = findLeadsByStage('replied_went_cold');
   log.info('Replied-went-cold contacts found', { count: allPeople.length });
 
   const candidates = allPeople.filter((p) => {
@@ -188,9 +155,7 @@ export async function main(opts = {}) {
   console.log(`  PREPARE BATCH — ${modeLabels[mode]}`);
   console.log('═══════════════════════════════════════════════════════════');
 
-  if (!hasTwentyConfig()) {
-    throw new Error('TWENTY_BASE_URL and TWENTY_API_KEY must be set in .env');
-  }
+  initDb();
 
   let candidates;
   let suppressedCount = 0;
@@ -241,7 +206,7 @@ export async function main(opts = {}) {
     const salt = new Date().toISOString().slice(0, 10);
     for (const p of candidates) {
       const email = p.emails?.primaryEmail || '';
-      const variant = parseInt(hash(`${email}|${salt}`).slice(0, 8), 16) % 2 === 0 ? 'A' : 'B';
+      const variant = assignAbVariant(email, new Date(`${salt}T00:00:00.000Z`));
       p._abVariant = variant;
       if (variant === 'A') variantA++;
       else variantB++;
@@ -253,7 +218,7 @@ export async function main(opts = {}) {
     email: p.emails?.primaryEmail || '',
     first_name: p.name?.firstName || '',
     last_name: p.name?.lastName || '',
-    company_name: p.company || '',
+    company_name: p.companyName || p.company?.name || '',
     icp_score: toInt(p.icpScore),
     icp_tier: p.icpTier || '',
     hook_text: p.hookText || '',
@@ -287,27 +252,27 @@ export async function main(opts = {}) {
   const csvPath = join(outputDir, `${modeSlug}_${regionSlug}${testSlug}_${date}.csv`);
   writeFileSync(csvPath, stringify(csvRows, { header: true }));
 
-  // Update Twenty
+  // Update SQLite
   if (!dryRun) {
     const targetStages = { first_touch: 'queued', nurture: 'nurture', soft_followup: 'queued' };
     const targetStage = targetStages[mode] || 'queued';
-    log.info('Updating Twenty CRM', { targetStage, count: candidates.length });
+    log.info('Updating SQLite', { targetStage, count: candidates.length });
     const updates = candidates.map((p) => {
       const update = {
         id: p.id,
-        funnelStage: targetStage,
-        abVariant: p._abVariant,
+        funnel_stage: targetStage,
+        ab_variant: p._abVariant,
       };
       if (testName) {
-        update.abTestName = testName;
+        update.ab_test_name = testName;
         const existing = (p.abTestHistory || '').split(',').map((s) => s.trim()).filter(Boolean);
         if (!existing.includes(testName)) existing.push(testName);
-        update.abTestHistory = existing.join(',');
+        update.ab_test_history = existing.join(',');
       }
       return update;
     });
-    const result = await batchUpdate('people', updates);
-    log.info('Twenty CRM updated', { updated: result.updated, errors: result.errors });
+    updateLeads(updates);
+    log.info('SQLite updated', { updated: updates.length, errors: 0 });
   }
 
   // Print summary
@@ -334,10 +299,10 @@ export async function main(opts = {}) {
   }
   console.log(`\n  Suppressed: ${suppressedCount}`);
   if (dryRun) {
-    console.log('  DRY RUN — Twenty not updated');
+    console.log('  DRY RUN — SQLite not updated');
   } else {
     const summaryStages = { first_touch: 'queued', nurture: 'nurture', soft_followup: 'queued' };
-    console.log(`  Twenty CRM updated: ${candidates.length} People -> funnelStage: '${summaryStages[mode] || 'queued'}'`);
+    console.log(`  SQLite updated: ${candidates.length} leads -> funnelStage: '${summaryStages[mode] || 'queued'}'`);
   }
   console.log(`  CSV written to: ${csvPath}`);
 

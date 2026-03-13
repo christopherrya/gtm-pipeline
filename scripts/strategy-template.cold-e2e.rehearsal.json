@@ -1,0 +1,19 @@
+{
+  "name": "cold_e2e_push_disabled_rehearsal",
+  "notes": "Real pipeline through import, prepare, personalize, and push planning. Instantly send is disabled and queued leads are restored after rehearsal.",
+  "region": null,
+  "mode": "first_touch",
+  "testName": "subject_v1",
+  "dryRun": false,
+  "pushDryRun": true,
+  "autoMode": true,
+  "skipPersonalize": false,
+  "fullPipeline": true,
+  "selectLimit": 25,
+  "selectMinScore": 0,
+  "prepareMinScore": 0,
+  "tierFilter": ["low"],
+  "campaignStart": "",
+  "maxCost": 5,
+  "allowUnenrichable": true
+}
