@@ -6,6 +6,7 @@ import { stringify } from 'csv-stringify/sync';
 import { activeCrmProvider, hasCrmConfig, syncContactsToCrm } from './crm/index.js';
 import {
   PATHS,
+  PROJECT_ROOT,
   ensureDataDirs,
   getState,
   listRuns,
@@ -25,6 +26,7 @@ const NODES = [
   'N07_ABVariantAssignment',
   'N08_SuppressionFilter',
   'N09_TriggerQueueExport',
+  'N09b_OutreachCampaignCreate',
   'N10_CrmUpsert',
   'N11_InstantlyPush',
   'N12_RunReports',
@@ -122,7 +124,7 @@ function readLatestClayIngestion() {
 }
 
 function loadListingsFromDataDir() {
-  const listingsDir = join(process.cwd(), 'data', '2listings');
+  const listingsDir = join(PROJECT_ROOT, 'data', '2listings');
   if (!existsSync(listingsDir)) return [];
   const files = readdirSync(listingsDir)
     .filter((f) => f.endsWith('.json'))
@@ -360,6 +362,8 @@ async function executeNode(nodeId, context, startedAt) {
       return nodeSuppression(context, startedAt);
     case 'N09_TriggerQueueExport':
       return nodeExport(context, startedAt);
+    case 'N09b_OutreachCampaignCreate':
+      return nodeOutreachCampaignCreate(context, startedAt);
     case 'N10_CrmUpsert':
       return nodeCrmUpsert(context, startedAt);
     case 'N11_InstantlyPush':
@@ -374,7 +378,7 @@ async function executeNode(nodeId, context, startedAt) {
 async function nodeClayIngest(context, startedAt) {
   const nodeId = 'N01_ClayUploadIngest';
   const sourcePath = context.options.clayInputPath
-    ? join(process.cwd(), context.options.clayInputPath)
+    ? join(PROJECT_ROOT, context.options.clayInputPath)
     : readLatestClayIngestion();
   const report = createReportBase(context.runId, nodeId, startedAt);
   if (!sourcePath || !existsSync(sourcePath)) {
@@ -727,6 +731,145 @@ async function nodeExport(context, startedAt) {
   report.output_count = rows.length;
   report.queue_file = queuePath;
   report.checksum = manifest.checksum;
+  const outPath = join(context.runPath, `${nodeId}.report.json`);
+  writeJson(outPath, report);
+  return { path: outPath };
+}
+
+/**
+ * N09b — Create outreach campaign records in Supabase for the product-led GTM motion.
+ *
+ * For each eligible contact with an active listing, creates a gtm_outreach_campaigns row
+ * and generates a unique reply-to address (disclosure-{uuid}@inbound.discloser.co).
+ * Contacts pushed to Instantly will use this reply-to so agent replies are auto-processed.
+ *
+ * Requires env: SUPABASE_GTM_URL, SUPABASE_GTM_SERVICE_KEY, GTM_INBOUND_DOMAIN
+ */
+async function nodeOutreachCampaignCreate(context, startedAt) {
+  const nodeId = 'N09b_OutreachCampaignCreate';
+  const report = createReportBase(context.runId, nodeId, startedAt);
+
+  const supabaseUrl = process.env.SUPABASE_GTM_URL;
+  const supabaseKey = process.env.SUPABASE_GTM_SERVICE_KEY;
+  const inboundDomain = process.env.GTM_INBOUND_DOMAIN || 'inbound.discloser.co';
+  const outreachEnabled =
+    String(process.env.GTM_OUTREACH_ENABLED || 'false').toLowerCase() === 'true';
+
+  const contacts = context.eligibleContacts || [];
+  report.input_count = contacts.length;
+
+  // Filter to contacts with listings (they have a real estate property to reference)
+  const withListings = contacts.filter(
+    (c) => c.listings_matched === 'Yes' && (c.Email || c['Work Email'])
+  );
+
+  if (!outreachEnabled) {
+    const outPath = join(context.runPath, `${nodeId}.report.json`);
+    report.output_count = 0;
+    report.mode = 'disabled';
+    report.warning = 'GTM_OUTREACH_ENABLED=false, skipping campaign creation';
+    report.contacts_with_listings = withListings.length;
+    writeJson(outPath, report);
+    context.outreachCampaigns = [];
+    return { path: outPath };
+  }
+
+  if (!supabaseUrl || !supabaseKey) {
+    const outPath = join(context.runPath, `${nodeId}.report.json`);
+    report.output_count = 0;
+    report.mode = 'error';
+    report.warning = 'SUPABASE_GTM_URL or SUPABASE_GTM_SERVICE_KEY not set';
+    writeJson(outPath, report);
+    context.outreachCampaigns = [];
+    return { path: outPath };
+  }
+
+  let created = 0;
+  let skipped = 0;
+  const campaigns = [];
+
+  const createCampaigns = async () => {
+    for (const c of withListings) {
+      const email = c.Email || c['Work Email'] || '';
+      const agentName = `${c['First Name'] || ''} ${c['Last Name'] || ''}`.trim();
+      const listingAddress = c.listing_addresses || c.listing_address || '';
+
+      if (!email || !listingAddress) {
+        skipped += 1;
+        continue;
+      }
+
+      // Generate a UUID for the reply-to address
+      const campaignUuid = crypto.randomUUID();
+      const replyTo = `disclosure-${campaignUuid}@${inboundDomain}`;
+
+      const payload = {
+        id: campaignUuid,
+        agent_name: agentName,
+        agent_email: email,
+        listing_address: listingAddress,
+        listing_city: c.listing_city || '',
+        listing_source: c.listing_sources || '',
+        listing_url: c.listing_url || '',
+        listing_date: c.last_listing_date || null,
+        listing_fingerprint: c.listing_fingerprint || null,
+        reply_to_address: replyTo,
+        status: 'pending',
+      };
+
+      // Insert into Supabase (upsert to avoid duplicates on re-runs)
+      const resp = await fetch(`${supabaseUrl}/rest/v1/gtm_outreach_campaigns`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${supabaseKey}`,
+          apikey: supabaseKey,
+          Prefer: 'resolution=ignore-duplicates,return=representation',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && data.length > 0) {
+          campaigns.push({
+            campaign_id: campaignUuid,
+            reply_to: replyTo,
+            email,
+            agent_name: agentName,
+            listing_address: listingAddress,
+          });
+          // Store reply-to on the contact so N11 can set it in Instantly
+          c._gtm_reply_to = replyTo;
+          c._gtm_campaign_id = campaignUuid;
+          created += 1;
+        } else {
+          // Duplicate was ignored
+          skipped += 1;
+        }
+      } else {
+        const errText = await resp.text();
+        console.error(`[N09b] Supabase insert failed for ${email}: ${errText}`);
+        skipped += 1;
+      }
+    }
+  };
+
+  await withRetry(createCampaigns, 2);
+
+  // Write campaigns manifest for reference
+  const manifestPath = join(
+    PATHS.output,
+    `outreach-campaigns-${context.runId}.json`
+  );
+  writeJson(manifestPath, { run_id: context.runId, campaigns });
+  context.outreachCampaigns = campaigns;
+
+  report.output_count = created;
+  report.skipped = skipped;
+  report.contacts_with_listings = withListings.length;
+  report.mode = 'active';
+  report.manifest_file = manifestPath;
   const outPath = join(context.runPath, `${nodeId}.report.json`);
   writeJson(outPath, report);
   return { path: outPath };

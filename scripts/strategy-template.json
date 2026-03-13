@@ -1,0 +1,18 @@
+{
+  "name": "weekly_hot_high_push",
+  "notes": "Target more hot/high leads this week. Fallbacks are acceptable for unenrichable leads.",
+  "region": null,
+  "mode": "first_touch",
+  "testName": "subject_v1",
+  "dryRun": false,
+  "autoMode": false,
+  "skipPersonalize": false,
+  "fullPipeline": true,
+  "selectLimit": 500,
+  "selectMinScore": 55,
+  "prepareMinScore": 70,
+  "tierFilter": ["hot", "high"],
+  "campaignStart": "",
+  "maxCost": 10,
+  "allowUnenrichable": true
+}

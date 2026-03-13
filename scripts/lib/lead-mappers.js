@@ -1,0 +1,147 @@
+import crypto from 'crypto';
+import { extractRegion, icpTier } from './constants.js';
+import { toInt, igHandle } from './twenty-client.js';
+
+function isoNow() {
+  return new Date().toISOString();
+}
+
+export function csvRowToLead(contact, opts = {}) {
+  const rawLocation = contact.Location || contact.location || contact.City || '';
+  const email = (contact.Email || contact['Work Email'] || contact.email || '').toLowerCase().trim();
+
+  return {
+    id: contact.id || opts.id || crypto.randomUUID(),
+    email,
+    first_name: contact['First Name'] || contact.first_name || '',
+    last_name: contact['Last Name'] || contact.last_name || '',
+    job_title: contact.job_title || contact['Job Title'] || '',
+    city: rawLocation.split(',')[0]?.trim() || contact.city || '',
+    company_name: contact['Company Name'] || contact.company_name || contact.company || '',
+    company_id: opts.companyId || contact.company_id || '',
+    icp_score: toInt(contact.icp_score),
+    icp_tier: contact.icp_tier || (contact.icp_score ? icpTier(toInt(contact.icp_score)) : ''),
+    trigger_score: toInt(contact.trigger_score),
+    hook_text: contact.hook_text || contact.best_hook || '',
+    hook_variant: contact.hook_variant || '',
+    hook_source: contact.hook_source || '',
+    region: contact.region || opts.region || extractRegion(rawLocation),
+    ig_username: igHandle(contact['IG handle'] || contact.ig_username || ''),
+    ig_followers: toInt(contact.ig_followers),
+    ig_days_since_post: toInt(contact.ig_days_since_post, 999),
+    ig_recent_addresses: contact.ig_recent_addresses || contact.igRecentAddresses || '',
+    ig_neighborhoods: contact.ig_neighborhoods || contact.igNeighborhoods || '',
+    ig_listing_posts_count: toInt(contact.ig_listing_posts_count || contact.ig_listing_posts || contact.igListingPostsCount),
+    ig_sold_posts_count: toInt(contact.ig_sold_posts_count || contact.ig_sold_posts || contact.igSoldPostsCount),
+    linkedin_url: contact['LinkedIn Profile'] || contact.linkedin_url || '',
+    linkedin_headline: (contact.linkedin_headline || '').substring(0, 255),
+    linkedin_days_since_post: toInt(contact.linkedin_days_since_post, 999),
+    linkedin_recent_topic: (contact.linkedin_recent_topic || '').substring(0, 255),
+    funnel_stage: contact.funnel_stage || contact.funnelStage || (contact.icp_score ? 'scored' : 'new'),
+    last_outreach_date: contact.lastOutreachDate || contact.last_outreach_date || '',
+    outreach_status: contact.outreachStatus || contact.outreach_status || '',
+    ab_variant: contact.abVariant || contact.ab_variant || '',
+    ab_test_name: contact.abTestName || contact.ab_test_name || '',
+    ab_test_history: contact.abTestHistory || contact.ab_test_history || '',
+    assigned_inbox: contact.assignedInbox || contact.assigned_inbox || '',
+    campaign_label: contact.campaignLabel || contact.campaign_label || '',
+    instantly_campaign_id: contact.instantlyCampaignId || contact.instantly_campaign_id || '',
+    reply_to_address: contact.replyToAddress || contact.reply_to_address || '',
+    first_contacted_at: contact.firstContactedAt || contact.first_contacted_at || '',
+    email_opened_at: contact.emailOpenedAt || contact.email_opened_at || '',
+    replied_at: contact.repliedAt || contact.replied_at || '',
+    re_engage_attempts: toInt(contact.reEngageAttempts || contact.re_engage_attempts),
+    enriched_at: contact.linkedin_enriched_at || contact.ig_enriched_at || contact.enriched_at || isoNow(),
+    external_lead_id: contact.external_lead_id || '',
+    lead_source: contact.source_primary || contact.leadSource || contact.lead_source || 'Clay',
+    personalized_subject: contact.personalizedSubject || contact.personalized_subject || '',
+    personalized_hook: contact.personalizedHook || contact.personalized_hook || '',
+    personalization_method: contact.personalizationMethod || contact.personalization_method || '',
+    twenty_id: contact.twentyId || contact.twenty_id || '',
+    twenty_dirty: contact.twenty_dirty != null ? Number(contact.twenty_dirty) : 1,
+    twenty_synced_at: contact.twenty_synced_at || '',
+    source_file: opts.sourceFile || contact.source_file || '',
+    pool_selected_at: contact.pool_selected_at || opts.poolSelectedAt || '',
+    created_at: contact.created_at || undefined,
+    updated_at: contact.updated_at || undefined,
+  };
+}
+
+export function twentyPersonToLead(person) {
+  return {
+    id: person.id || crypto.randomUUID(),
+    email: (person.emails?.primaryEmail || '').toLowerCase(),
+    first_name: person.name?.firstName || '',
+    last_name: person.name?.lastName || '',
+    job_title: person.jobTitle || '',
+    city: person.city || '',
+    company_name: person.company?.name || person.companyName || person.company || '',
+    company_id: person.companyId || '',
+    icp_score: toInt(person.icpScore),
+    icp_tier: person.icpTier || '',
+    trigger_score: toInt(person.triggerScore),
+    hook_text: person.hookText || '',
+    hook_variant: person.hookVariant || '',
+    hook_source: person.hookSource || '',
+    region: person.region || '',
+    ig_username: person.igUsername || '',
+    ig_followers: toInt(person.igFollowers),
+    ig_days_since_post: toInt(person.igDaysSincePost, 999),
+    ig_recent_addresses: person.igRecentAddresses || '',
+    ig_neighborhoods: person.igNeighborhoods || '',
+    ig_listing_posts_count: toInt(person.igListingPostsCount),
+    ig_sold_posts_count: toInt(person.igSoldPostsCount),
+    linkedin_url: person.linkedinLink?.primaryLinkUrl || '',
+    linkedin_headline: person.linkedinHeadline || '',
+    linkedin_days_since_post: toInt(person.linkedinDaysSincePost, 999),
+    linkedin_recent_topic: person.linkedinRecentTopic || '',
+    funnel_stage: person.funnelStage || 'new',
+    last_outreach_date: person.lastOutreachDate || '',
+    outreach_status: person.outreachStatus || '',
+    ab_variant: person.abVariant || '',
+    ab_test_name: person.abTestName || '',
+    ab_test_history: person.abTestHistory || '',
+    assigned_inbox: person.assignedInbox || '',
+    campaign_label: person.campaignLabel || '',
+    instantly_campaign_id: person.instantlyCampaignId || '',
+    reply_to_address: person.replyToAddress || '',
+    first_contacted_at: person.firstContactedAt || '',
+    email_opened_at: person.emailOpenedAt || '',
+    replied_at: person.repliedAt || '',
+    re_engage_attempts: toInt(person.reEngageAttempts),
+    enriched_at: person.enrichedAt || '',
+    external_lead_id: person.externalLeadId || '',
+    lead_source: person.leadSource || 'Clay',
+    personalized_subject: person.personalizedSubject || '',
+    personalized_hook: person.personalizedHook || '',
+    personalization_method: person.personalizationMethod || '',
+    twenty_id: person.id || '',
+    twenty_dirty: 0,
+    twenty_synced_at: isoNow(),
+  };
+}
+
+export function leadToTwentyPayload(lead) {
+  return {
+    id: lead.twenty_id,
+    name: {
+      firstName: lead.first_name || '',
+      lastName: lead.last_name || '',
+    },
+    emails: {
+      primaryEmail: lead.email || '',
+    },
+    companyName: lead.company_name || '',
+    icpTier: lead.icp_tier || '',
+    funnelStage: lead.funnel_stage || 'new',
+    outreachStatus: lead.outreach_status || '',
+    region: lead.region || '',
+    repliedAt: lead.replied_at || '',
+    emailOpenedAt: lead.email_opened_at || '',
+    linkedinLink: {
+      primaryLinkUrl: lead.linkedin_url || '',
+      primaryLinkLabel: 'LinkedIn',
+    },
+    igUsername: lead.ig_username || '',
+  };
+}

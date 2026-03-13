@@ -1,7 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'fs';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 
-const DATA_ROOT = join(process.cwd(), 'data', 'orchestrator');
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+export const PROJECT_ROOT = join(__dirname, '..', '..');
+const DATA_ROOT = join(PROJECT_ROOT, 'data', 'orchestrator');
 
 export const PATHS = {
   root: DATA_ROOT,
