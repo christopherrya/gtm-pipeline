@@ -1,0 +1,1001 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pipeline Tracker — GTM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & base (matching orchestrator design system) ── */
+    :root {
+      --bg: #eef3fa;
+      --panel: #ffffff;
+      --ink: #0f172a;
+      --muted: #6b7280;
+      --line: #d4deea;
+      --accent: #0a7c66;
+      --accent-soft: #d9f7ef;
+      --ok: #065f46;
+      --ok-bg: #dcfce7;
+      --bad: #991b1b;
+      --bad-bg: #fee2e2;
+      --warn: #92400e;
+      --warn-bg: #fef3c7;
+      --idle-bg: #e5e7eb;
+      --idle-fg: #374151;
+      --approval: #7c3aed;
+      --approval-bg: #ede9fe;
+      --node-pool: #2563eb;
+      --node-select: #7c3aed;
+      --node-import: #475569;
+      --node-prepare: #0d9488;
+      --node-personalize: #ea580c;
+      --node-push: #0a7c66;
+      --node-sync: #ca8a04;
+      --log-bg: #0f172a;
+      --log-fg: #d8ffee;
+    }
+
+    * { box-sizing: border-box; margin: 0; }
+
+    body {
+      font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
+      background:
+        radial-gradient(circle at 0% 0%, #dff4ff 0%, rgba(223,244,255,0.45) 26%, transparent 54%),
+        radial-gradient(circle at 100% 0%, #dcfce7 0%, rgba(220,252,231,0.35) 24%, transparent 52%),
+        radial-gradient(circle at 50% 100%, #f8fafc 0%, transparent 60%),
+        var(--bg);
+      color: var(--ink);
+      min-height: 100vh;
+    }
+
+    /* ── Top bar ── */
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 20px;
+      border-bottom: 1px solid rgba(15,23,42,0.08);
+      background: rgba(255,255,255,0.74);
+      backdrop-filter: blur(8px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      gap: 12px;
+    }
+    .topbar h1 { font-size: 18px; letter-spacing: -0.02em; font-weight: 700; }
+    .topbar-sub { color: #64748b; font-size: 11px; margin-top: 1px; }
+    .topbar-right { display: flex; align-items: center; gap: 10px; }
+    .live-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--accent);
+      animation: livePulse 2s ease-in-out infinite;
+    }
+    .live-label { font-size: 11px; color: var(--muted); }
+    @keyframes livePulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(10,124,102,0.5); }
+      50% { opacity: 0.6; box-shadow: 0 0 0 5px rgba(10,124,102,0); }
+    }
+    .metric-pill {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 11px;
+      color: #334155;
+      font-weight: 500;
+    }
+    .nav-link {
+      font-size: 12px;
+      color: var(--accent);
+      text-decoration: none;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #fff;
+      transition: all 0.15s;
+    }
+    .nav-link:hover { border-color: var(--accent); }
+
+    /* ── Main container ── */
+    .container { padding: 20px; max-width: 1400px; margin: 0 auto; }
+
+    /* ── Flow diagram ── */
+    .flow-section {
+      background: rgba(255,255,255,0.84);
+      border: 1px solid rgba(255,255,255,0.6);
+      border-radius: 18px;
+      padding: 24px 20px 20px;
+      box-shadow: 0 12px 30px rgba(15,23,42,0.06), inset 0 1px 0 rgba(255,255,255,0.8);
+      backdrop-filter: blur(6px);
+      margin-bottom: 16px;
+      overflow-x: auto;
+    }
+    .flow-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .section-label {
+      font-size: 11px;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+    }
+    .flow-group-labels {
+      display: flex;
+      gap: 16px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+    .flow-group-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .flow-group-dot {
+      width: 8px; height: 8px;
+      border-radius: 2px;
+    }
+
+    .flow-track {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      min-width: max-content;
+      padding: 8px 0;
+    }
+
+    /* Pipeline node */
+    .p-node {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      position: relative;
+      flex-shrink: 0;
+    }
+    .p-node-card {
+      width: 130px;
+      border: 1.5px solid #d9e2ee;
+      border-radius: 14px;
+      padding: 14px 10px 12px;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+      text-align: center;
+      position: relative;
+      transition: all 0.25s ease;
+      cursor: default;
+    }
+    .p-node-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      border-radius: 14px 14px 0 0;
+      background: var(--node-color, #94a3b8);
+    }
+    .p-node-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(15,23,42,0.08);
+    }
+    .p-node-icon {
+      font-size: 20px;
+      margin-bottom: 2px;
+      line-height: 1;
+    }
+    .p-node-name {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .p-node-desc {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .p-node-metric {
+      font-size: 18px;
+      font-weight: 700;
+      font-family: "JetBrains Mono", monospace;
+      color: var(--ink);
+      margin-top: 6px;
+      line-height: 1;
+    }
+    .p-node-metric-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .p-node-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-weight: 500;
+      margin-top: 8px;
+    }
+    .p-node-badge.idle { background: var(--idle-bg); color: var(--idle-fg); }
+    .p-node-badge.ok { background: var(--ok-bg); color: var(--ok); }
+    .p-node-badge.running { background: var(--warn-bg); color: var(--warn); }
+    .p-node-badge.error { background: var(--bad-bg); color: var(--bad); }
+    .p-node-badge.awaiting_approval { background: var(--approval-bg); color: var(--approval); }
+    .p-node-badge-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .p-node-badge.running .p-node-badge-dot {
+      animation: livePulse 1.5s ease-in-out infinite;
+    }
+
+    .p-node-sub {
+      font-size: 9px;
+      color: var(--muted);
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    /* Active glow on running nodes */
+    .p-node-card.state-running {
+      border-color: #f59e0b;
+      box-shadow: 0 0 0 3px rgba(245,158,11,0.15), 0 6px 20px rgba(245,158,11,0.1);
+    }
+    .p-node-card.state-ok {
+      border-color: #10b981;
+    }
+    .p-node-card.state-error {
+      border-color: #ef4444;
+      box-shadow: 0 0 0 3px rgba(239,68,68,0.12);
+    }
+    .p-node-card.state-awaiting_approval {
+      border-color: #8b5cf6;
+      box-shadow: 0 0 0 3px rgba(139,92,246,0.15);
+    }
+
+    /* ── Connectors ── */
+    .connector {
+      width: 48px;
+      height: 2px;
+      background: var(--line);
+      position: relative;
+      flex-shrink: 0;
+      align-self: center;
+      margin-top: -40px;
+    }
+    .connector::after {
+      content: "";
+      position: absolute;
+      right: -4px;
+      top: -3px;
+      border: 4px solid transparent;
+      border-left: 5px solid var(--line);
+    }
+    .connector.active {
+      background: var(--accent);
+    }
+    .connector.active::after {
+      border-left-color: var(--accent);
+    }
+    .connector.flowing {
+      overflow: hidden;
+    }
+    .connector.flowing::before {
+      content: "";
+      position: absolute;
+      top: -2px;
+      left: -20px;
+      width: 16px;
+      height: 6px;
+      border-radius: 3px;
+      background: var(--accent);
+      opacity: 0.7;
+      animation: flowParticle 1.2s linear infinite;
+    }
+    @keyframes flowParticle {
+      0% { left: -20px; opacity: 0; }
+      15% { opacity: 0.8; }
+      85% { opacity: 0.8; }
+      100% { left: calc(100% + 4px); opacity: 0; }
+    }
+
+    .connector-group-break {
+      width: 20px;
+      flex-shrink: 0;
+      position: relative;
+      align-self: center;
+      margin-top: -40px;
+    }
+    .connector-group-break::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--line);
+    }
+
+    /* ── Runs section ── */
+    .runs-section {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .panel {
+      background: rgba(255,255,255,0.84);
+      border: 1px solid rgba(255,255,255,0.6);
+      border-radius: 18px;
+      padding: 16px;
+      box-shadow: 0 12px 30px rgba(15,23,42,0.06), inset 0 1px 0 rgba(255,255,255,0.8);
+      backdrop-filter: blur(6px);
+    }
+
+    .run-list { list-style: none; padding: 0; max-height: 340px; overflow-y: auto; }
+    .run-item {
+      border: 1px solid #e6edf5;
+      background: rgba(255,255,255,0.96);
+      border-radius: 12px;
+      margin-bottom: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .run-item:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .run-item.active {
+      border-color: var(--accent);
+      background: linear-gradient(180deg, #f0fdfa 0%, #ecfeff 100%);
+    }
+    .run-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .run-id {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .run-meta {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 3px;
+      display: flex;
+      gap: 10px;
+    }
+    .run-steps {
+      display: flex;
+      gap: 4px;
+      margin-top: 8px;
+    }
+    .run-step-chip {
+      font-size: 9px;
+      padding: 3px 7px;
+      border-radius: 6px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .run-step-chip.ok { background: var(--ok-bg); color: var(--ok); }
+    .run-step-chip.error { background: var(--bad-bg); color: var(--bad); }
+    .run-step-chip.running { background: var(--warn-bg); color: var(--warn); }
+    .run-step-chip.idle { background: var(--idle-bg); color: var(--idle-fg); }
+
+    .run-detail-panel {
+      min-height: 200px;
+    }
+    .run-detail-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 200px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 4px 12px;
+      font-size: 12px;
+      margin-bottom: 14px;
+    }
+    .detail-label {
+      color: var(--muted);
+      font-size: 11px;
+      text-align: right;
+    }
+    .detail-value {
+      font-weight: 500;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+    }
+    .detail-steps { margin-top: 10px; }
+    .detail-step {
+      display: grid;
+      grid-template-columns: 80px 60px 60px 1fr;
+      gap: 8px;
+      align-items: center;
+      padding: 7px 0;
+      border-bottom: 1px solid rgba(0,0,0,0.04);
+      font-size: 11px;
+    }
+    .detail-step-name { font-weight: 600; text-transform: capitalize; }
+    .detail-step-dur { color: var(--muted); font-family: "JetBrains Mono", monospace; font-size: 10px; }
+    .detail-step-metrics {
+      font-size: 10px;
+      color: #475569;
+      font-family: "JetBrains Mono", monospace;
+    }
+    .detail-artifacts {
+      margin-top: 10px;
+      font-size: 10px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+
+    /* ── Log section ── */
+    .log-section {
+      background: rgba(255,255,255,0.84);
+      border: 1px solid rgba(255,255,255,0.6);
+      border-radius: 18px;
+      box-shadow: 0 12px 30px rgba(15,23,42,0.06), inset 0 1px 0 rgba(255,255,255,0.8);
+      backdrop-filter: blur(6px);
+      overflow: hidden;
+    }
+    .log-header {
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .log-body {
+      background: linear-gradient(180deg, #0f172a 0%, #111b31 100%);
+      color: var(--log-fg);
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      padding: 12px 16px;
+      max-height: 260px;
+      overflow-y: auto;
+      line-height: 1.7;
+      border-top: 1px solid #1e293b;
+    }
+    .log-line {
+      display: flex;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .log-ts { color: #4a6a8a; flex-shrink: 0; }
+    .log-level { flex-shrink: 0; font-weight: 600; min-width: 40px; }
+    .log-level.info { color: #5eead4; }
+    .log-level.warn { color: #fde68a; }
+    .log-level.error { color: #fca5a5; }
+    .log-level.debug { color: #6b7280; }
+    .log-step { color: #60a5fa; flex-shrink: 0; }
+    .log-msg { color: #e2e8f0; }
+    .log-data { color: #94a3b8; }
+    .log-empty {
+      color: #4a6a8a;
+      text-align: center;
+      padding: 30px;
+      font-style: italic;
+    }
+
+    /* ── Status badge (shared) ── */
+    .status-badge {
+      font-size: 10px;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-weight: 600;
+    }
+    .status-badge.ok { background: var(--ok-bg); color: var(--ok); }
+    .status-badge.running { background: var(--warn-bg); color: var(--warn); }
+    .status-badge.error { background: var(--bad-bg); color: var(--bad); }
+    .status-badge.awaiting_approval { background: var(--approval-bg); color: var(--approval); }
+
+    /* ── Empty state ── */
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--muted);
+    }
+    .empty-state-icon { font-size: 32px; margin-bottom: 10px; opacity: 0.5; }
+    .empty-state-text { font-size: 13px; }
+    .empty-state-hint { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+
+    /* ── Stagger entrance animation ── */
+    .p-node { opacity: 0; animation: nodeIn 0.4s ease forwards; }
+    .p-node:nth-child(1) { animation-delay: 0.05s; }
+    .p-node:nth-child(2) { animation-delay: 0.1s; }
+    .p-node:nth-child(3) { animation-delay: 0.15s; }
+    .p-node:nth-child(4) { animation-delay: 0.2s; }
+    .p-node:nth-child(5) { animation-delay: 0.25s; }
+    .p-node:nth-child(6) { animation-delay: 0.3s; }
+    .p-node:nth-child(7) { animation-delay: 0.35s; }
+    .p-node:nth-child(8) { animation-delay: 0.4s; }
+    .p-node:nth-child(9) { animation-delay: 0.45s; }
+    .p-node:nth-child(10) { animation-delay: 0.5s; }
+    .p-node:nth-child(11) { animation-delay: 0.55s; }
+    .p-node:nth-child(12) { animation-delay: 0.6s; }
+    .p-node:nth-child(13) { animation-delay: 0.65s; }
+    @keyframes nodeIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Dark mode ── */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b1220;
+        --panel: #0f172a;
+        --ink: #e2e8f0;
+        --muted: #94a3b8;
+        --line: #1f2a40;
+        --accent: #14b8a6;
+        --accent-soft: rgba(20,184,166,0.22);
+        --ok: #34d399; --ok-bg: rgba(52,211,153,0.18);
+        --bad: #f87171; --bad-bg: rgba(248,113,113,0.2);
+        --warn: #fde68a; --warn-bg: rgba(250,204,21,0.2);
+        --idle-bg: rgba(148,163,184,0.2); --idle-fg: #cbd5e1;
+        --approval: #a78bfa; --approval-bg: rgba(167,139,250,0.2);
+        --log-bg: #020617;
+        --log-fg: #ccfbf1;
+      }
+
+      body {
+        background:
+          radial-gradient(circle at 0% 0%, rgba(56,189,248,0.14) 0%, transparent 36%),
+          radial-gradient(circle at 100% 0%, rgba(34,197,94,0.1) 0%, transparent 34%),
+          radial-gradient(circle at 50% 100%, rgba(30,41,59,0.24) 0%, transparent 58%),
+          var(--bg);
+      }
+      .topbar {
+        background: rgba(15,23,42,0.72);
+        border-bottom: 1px solid rgba(148,163,184,0.2);
+      }
+      .topbar-sub { color: #94a3b8; }
+      .metric-pill { border-color: #263349; background: #0f172a; color: #cbd5e1; }
+      .nav-link { background: #0f172a; color: #14b8a6; border-color: #2b3a55; }
+
+      .flow-section, .panel, .log-section {
+        background: rgba(15,23,42,0.75);
+        border-color: rgba(51,65,85,0.7);
+        box-shadow: 0 14px 30px rgba(2,6,23,0.5), inset 0 1px 0 rgba(148,163,184,0.08);
+      }
+
+      .p-node-card {
+        border-color: #334155;
+        background: linear-gradient(180deg, #111c33 0%, #0f172a 100%);
+        box-shadow: 0 8px 20px rgba(2,6,23,0.45);
+      }
+      .p-node-card:hover { border-color: #14b8a6; }
+
+      .connector { background: #2b3a55; }
+      .connector::after { border-left-color: #2b3a55; }
+      .connector.active { background: var(--accent); }
+      .connector.active::after { border-left-color: var(--accent); }
+      .connector-group-break::after { background: #2b3a55; }
+
+      .run-item {
+        border-color: #334155;
+        background: rgba(15,23,42,0.85);
+      }
+      .run-item.active {
+        border-color: #14b8a6;
+        background: linear-gradient(180deg, rgba(15,118,110,0.25) 0%, rgba(15,23,42,0.9) 100%);
+      }
+
+      .log-body {
+        background: linear-gradient(180deg, #020617 0%, #0b1220 100%);
+        border-color: #1e293b;
+      }
+
+      .detail-step-metrics { color: #94a3b8; }
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 900px) {
+      .runs-section { grid-template-columns: 1fr; }
+      .topbar { flex-wrap: wrap; }
+      .flow-track { padding: 8px 10px; }
+    }
+  </style>
+</head>
+<body>
+
+<header class="topbar">
+  <div>
+    <h1>Pipeline Tracker</h1>
+    <div class="topbar-sub">Mass email outreach — lead flow monitoring</div>
+  </div>
+  <div id="top-metrics" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+  <div class="topbar-right">
+    <div class="live-dot"></div>
+    <span class="live-label" id="refresh-label">Live — 10s</span>
+    <a href="/" class="nav-link">Orchestrator</a>
+    <a href="/review.html" class="nav-link">Review Queue</a>
+  </div>
+</header>
+
+<main class="container">
+
+  <!-- ── Pipeline Flow ── -->
+  <section class="flow-section">
+    <div class="flow-header">
+      <span class="section-label">Pipeline Flow</span>
+      <div class="flow-group-labels">
+        <div class="flow-group-label"><div class="flow-group-dot" style="background:#94a3b8"></div> Manual</div>
+        <div class="flow-group-label"><div class="flow-group-dot" style="background:var(--accent)"></div> Automated</div>
+        <div class="flow-group-label"><div class="flow-group-dot" style="background:#ca8a04"></div> Scheduled</div>
+      </div>
+    </div>
+    <div class="flow-track" id="flow-track">
+      <!-- Rendered by JS -->
+    </div>
+  </section>
+
+  <!-- ── Runs + Detail ── -->
+  <section class="runs-section">
+    <div class="panel">
+      <div class="section-label" style="margin-bottom:10px">Recent Runs</div>
+      <ul class="run-list" id="run-list"></ul>
+    </div>
+    <div class="panel run-detail-panel" id="run-detail">
+      <div class="section-label" style="margin-bottom:10px">Run Detail</div>
+      <div class="run-detail-empty">Select a run to inspect</div>
+    </div>
+  </section>
+
+  <!-- ── Activity Log ── -->
+  <section class="log-section">
+    <div class="log-header">
+      <span class="section-label">Activity Log</span>
+      <span style="font-size:10px;color:var(--muted)" id="log-count"></span>
+    </div>
+    <div class="log-body" id="log-body">
+      <div class="log-empty">No log entries yet. Run the pipeline to see activity.</div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+// ── Node definitions ──
+const NODES = [
+  { id: 'pool',        name: 'Pool',        icon: '\u{1F4C1}', desc: 'Lead CSVs',           color: '#2563eb', group: 'manual' },
+  { id: 'select',      name: 'Select',      icon: '\u{1F50D}', desc: 'select-from-pool.js', color: '#7c3aed', group: 'manual' },
+  { id: 'import',      name: 'Import',      icon: '\u{1F4E5}', desc: 'bulk-import-twenty.js', color: '#475569', group: 'manual' },
+  { id: 'prepare',     name: 'Prepare',     icon: '\u{1F4CB}', desc: 'prepare-batch.js',    color: '#0d9488', group: 'auto', step: 'prepare' },
+  { id: 'personalize', name: 'Personalize', icon: '\u{2728}',  desc: 'personalize-batch.js', color: '#ea580c', group: 'auto', step: 'personalize' },
+  { id: 'push',        name: 'Push',        icon: '\u{1F680}', desc: 'push-to-instantly.js', color: '#0a7c66', group: 'auto', step: 'push' },
+  { id: 'sync',        name: 'Sync',        icon: '\u{1F504}', desc: 'sync-status.js',      color: '#ca8a04', group: 'scheduled' },
+];
+
+// Step name to node id mapping
+const STEP_TO_NODE = { prepare: 'prepare', personalize: 'personalize', push: 'push' };
+
+let runs = [];
+let logEntries = [];
+let selectedRunId = null;
+let refreshTimer = null;
+
+// ── API ──
+async function fetchRuns() {
+  try {
+    const res = await fetch('/api/pipeline/runs');
+    if (!res.ok) return [];
+    return await res.json();
+  } catch { return []; }
+}
+
+async function fetchLog() {
+  try {
+    const res = await fetch('/api/pipeline/log?limit=60');
+    if (!res.ok) return [];
+    return await res.json();
+  } catch { return []; }
+}
+
+// ── Helpers ──
+function fmtDuration(ms) {
+  if (!ms) return '\u2014';
+  if (ms < 1000) return ms + 'ms';
+  const s = ms / 1000;
+  if (s < 60) return s.toFixed(1) + 's';
+  const m = Math.floor(s / 60);
+  const rem = Math.round(s % 60);
+  return m + 'm ' + rem + 's';
+}
+
+function fmtTime(iso) {
+  if (!iso) return '\u2014';
+  const d = new Date(iso);
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function fmtTimeShort(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+}
+
+function statusLabel(s) {
+  if (s === 'ok') return 'OK';
+  if (s === 'awaiting_approval') return 'Awaiting';
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Idle';
+}
+
+// ── Get latest run's step statuses for the flow nodes ──
+function getNodeStates() {
+  const states = {};
+  NODES.forEach(n => { states[n.id] = { status: 'idle', metric: null, metricLabel: '' }; });
+
+  const latestRun = runs[0];
+  if (!latestRun) return states;
+
+  // Map steps from the latest run to node states
+  for (const step of (latestRun.steps || [])) {
+    const nodeId = STEP_TO_NODE[step.step];
+    if (!nodeId) continue;
+
+    states[nodeId].status = step.status || 'idle';
+    // Extract a key metric to display
+    const m = step.metrics || {};
+    if (step.step === 'prepare') {
+      states[nodeId].metric = m.queued ?? m.candidates ?? null;
+      states[nodeId].metricLabel = 'queued';
+    } else if (step.step === 'personalize') {
+      states[nodeId].metric = m.total ?? m.llm ?? null;
+      states[nodeId].metricLabel = m.llm != null ? 'LLM' : 'total';
+    } else if (step.step === 'push') {
+      states[nodeId].metric = m.pushed ?? null;
+      states[nodeId].metricLabel = 'pushed';
+    }
+  }
+
+  // If the run is running overall, detect the active flow
+  if (latestRun.status === 'running') {
+    // Nodes before the currently running step should show "ok" or their status
+    // The sync node shows "scheduled" separately
+  }
+
+  return states;
+}
+
+// ── Render pipeline flow ──
+function renderFlow() {
+  const track = document.getElementById('flow-track');
+  const states = getNodeStates();
+  const latestRun = runs[0];
+
+  track.innerHTML = '';
+
+  NODES.forEach((node, i) => {
+    // Node card
+    const el = document.createElement('div');
+    el.className = 'p-node';
+
+    const st = states[node.id];
+    const stateClass = st.status !== 'idle' ? ' state-' + st.status : '';
+
+    let metricHtml = '';
+    if (st.metric != null) {
+      metricHtml = `<div class="p-node-metric">${st.metric}</div><div class="p-node-metric-label">${st.metricLabel}</div>`;
+    }
+
+    const groupLabel = node.group === 'auto' ? 'automated' : node.group === 'scheduled' ? 'scheduled' : 'manual';
+
+    el.innerHTML = `
+      <div class="p-node-card${stateClass}" style="--node-color:${node.color}">
+        <div class="p-node-icon">${node.icon}</div>
+        <div class="p-node-name">${node.name}</div>
+        <div class="p-node-desc">${node.desc}</div>
+        ${metricHtml}
+        <div class="p-node-badge ${st.status}">
+          <span class="p-node-badge-dot"></span>
+          ${statusLabel(st.status)}
+        </div>
+      </div>
+      <div class="p-node-sub">${groupLabel}</div>
+    `;
+    track.appendChild(el);
+
+    // Connector between nodes
+    if (i < NODES.length - 1) {
+      const nextNode = NODES[i + 1];
+      const isGroupBreak = node.group !== nextNode.group;
+
+      if (isGroupBreak) {
+        const brk = document.createElement('div');
+        brk.className = 'connector-group-break';
+        track.appendChild(brk);
+      }
+
+      const conn = document.createElement('div');
+      conn.className = 'connector';
+
+      // Determine if this connector is "active" (data flowing through it)
+      // A connector is active if both its left node completed and right node is running or completed
+      const leftStatus = states[node.id].status;
+      const rightStatus = states[nextNode.id].status;
+      if (leftStatus === 'ok' && (rightStatus === 'ok' || rightStatus === 'running' || rightStatus === 'awaiting_approval')) {
+        conn.classList.add('active');
+      }
+      if (leftStatus === 'ok' && rightStatus === 'running') {
+        conn.classList.add('flowing');
+      }
+
+      track.appendChild(conn);
+    }
+  });
+}
+
+// ── Render runs list ──
+function renderRuns() {
+  const list = document.getElementById('run-list');
+
+  if (runs.length === 0) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">\u{1F4ED}</div>
+        <div class="empty-state-text">No pipeline runs yet</div>
+        <div class="empty-state-hint">Run: node scripts/run-pipeline.js --region "SF Bay"</div>
+      </div>`;
+    return;
+  }
+
+  list.innerHTML = '';
+  runs.forEach(run => {
+    const li = document.createElement('li');
+    li.className = 'run-item' + (run.runId === selectedRunId ? ' active' : '');
+    li.onclick = () => { selectedRunId = run.runId; renderRuns(); renderDetail(); };
+
+    const stepsHtml = (run.steps || []).map(s => {
+      const icon = s.status === 'ok' ? '\u2713' : s.status === 'error' ? '\u2717' : s.status === 'running' ? '\u25CF' : '\u25CB';
+      return `<span class="run-step-chip ${s.status}">${icon} ${s.step}</span>`;
+    }).join('');
+
+    li.innerHTML = `
+      <div class="run-item-header">
+        <div>
+          <div class="run-id">${run.runId}</div>
+          <div class="run-meta">
+            <span>${run.config?.region || '\u2014'}</span>
+            <span>${run.config?.mode || '\u2014'}</span>
+            <span>${fmtDuration(run.durationMs)}</span>
+            <span>${fmtTimeShort(run.startedAt)}</span>
+          </div>
+        </div>
+        <span class="status-badge ${run.status}">${statusLabel(run.status)}</span>
+      </div>
+      <div class="run-steps">${stepsHtml}</div>
+    `;
+    list.appendChild(li);
+  });
+}
+
+// ── Render run detail ──
+function renderDetail() {
+  const panel = document.getElementById('run-detail');
+  const run = runs.find(r => r.runId === selectedRunId);
+
+  if (!run) {
+    panel.innerHTML = `
+      <div class="section-label" style="margin-bottom:10px">Run Detail</div>
+      <div class="run-detail-empty">Select a run to inspect</div>`;
+    return;
+  }
+
+  const stepsHtml = (run.steps || []).map(s => {
+    const icon = s.status === 'ok' ? '\u2713' : s.status === 'error' ? '\u2717' : '\u25CF';
+    const metricsStr = s.metrics
+      ? Object.entries(s.metrics).map(([k, v]) => `${k}=${v}`).join('  ')
+      : '\u2014';
+    return `
+      <div class="detail-step">
+        <span class="detail-step-name"><span class="status-badge ${s.status}" style="margin-right:4px">${icon}</span>${s.step}</span>
+        <span class="detail-step-dur">${fmtDuration(s.durationMs)}</span>
+        <span class="status-badge ${s.status}">${statusLabel(s.status)}</span>
+        <span class="detail-step-metrics">${metricsStr}</span>
+      </div>`;
+  }).join('');
+
+  const artifactsHtml = (run.artifacts || []).length > 0
+    ? `<div class="detail-artifacts"><strong>Artifacts:</strong><br>${run.artifacts.map(a => a.split('/').pop()).join('<br>')}</div>`
+    : '';
+
+  panel.innerHTML = `
+    <div class="section-label" style="margin-bottom:10px">Run Detail</div>
+    <div class="detail-grid">
+      <span class="detail-label">Run ID</span><span class="detail-value">${run.runId}</span>
+      <span class="detail-label">Status</span><span class="detail-value"><span class="status-badge ${run.status}">${statusLabel(run.status)}</span></span>
+      <span class="detail-label">Region</span><span class="detail-value">${run.config?.region || '\u2014'}</span>
+      <span class="detail-label">Mode</span><span class="detail-value">${run.config?.mode || '\u2014'}</span>
+      <span class="detail-label">Test</span><span class="detail-value">${run.config?.testName || '\u2014'}</span>
+      <span class="detail-label">Started</span><span class="detail-value">${fmtTime(run.startedAt)}</span>
+      <span class="detail-label">Duration</span><span class="detail-value">${fmtDuration(run.durationMs)}</span>
+      ${run.config?.dryRun ? '<span class="detail-label">Dry Run</span><span class="detail-value">Yes</span>' : ''}
+    </div>
+    <div class="section-label" style="margin-bottom:6px">Steps</div>
+    <div class="detail-steps">${stepsHtml || '<div style="color:var(--muted);font-size:11px">No steps recorded</div>'}</div>
+    ${artifactsHtml}
+  `;
+}
+
+// ── Render log ──
+function renderLog() {
+  const body = document.getElementById('log-body');
+  const countEl = document.getElementById('log-count');
+
+  if (logEntries.length === 0) {
+    body.innerHTML = '<div class="log-empty">No log entries yet. Run the pipeline to see activity.</div>';
+    countEl.textContent = '';
+    return;
+  }
+
+  countEl.textContent = logEntries.length + ' entries';
+  body.innerHTML = logEntries.map(e => {
+    const ts = e.ts ? new Date(e.ts).toLocaleTimeString('en-US', { hour12: false }) : '';
+    const level = (e.level || 'info').toLowerCase();
+    const step = e.step || '';
+    const msg = e.msg || '';
+    const data = { ...e };
+    delete data.ts; delete data.level; delete data.step; delete data.msg; delete data.runId;
+    const dataStr = Object.keys(data).length > 0
+      ? Object.entries(data).map(([k, v]) => `${k}=${v}`).join(' ')
+      : '';
+    return `<div class="log-line"><span class="log-ts">${ts}</span><span class="log-level ${level}">${level.toUpperCase().padEnd(5)}</span><span class="log-step">[${step}]</span><span class="log-msg">${msg}</span><span class="log-data">${dataStr}</span></div>`;
+  }).join('');
+
+  // Auto-scroll to bottom
+  body.scrollTop = body.scrollHeight;
+}
+
+// ── Render top metrics ──
+function renderTopMetrics() {
+  const el = document.getElementById('top-metrics');
+  const totalRuns = runs.length;
+  const okRuns = runs.filter(r => r.status === 'ok').length;
+  const running = runs.filter(r => r.status === 'running').length;
+  const lastPushed = runs[0]?.steps?.find(s => s.step === 'push')?.metrics?.pushed;
+
+  let pills = `<span class="metric-pill">Runs: ${totalRuns}</span>`;
+  pills += `<span class="metric-pill">Success: ${okRuns}</span>`;
+  if (running > 0) pills += `<span class="metric-pill">Running: ${running}</span>`;
+  if (lastPushed != null) pills += `<span class="metric-pill">Last push: ${lastPushed} leads</span>`;
+  el.innerHTML = pills;
+}
+
+// ── Full refresh ──
+async function refresh() {
+  const [newRuns, newLog] = await Promise.all([fetchRuns(), fetchLog()]);
+  runs = newRuns;
+  logEntries = newLog;
+
+  if (!selectedRunId && runs.length > 0) selectedRunId = runs[0].runId;
+
+  renderFlow();
+  renderRuns();
+  renderDetail();
+  renderLog();
+  renderTopMetrics();
+}
+
+// ── Init ──
+refresh();
+refreshTimer = setInterval(refresh, 10000);
+</script>
+
+</body>
+</html>
