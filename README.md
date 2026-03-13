@@ -190,11 +190,10 @@ A React/Vite app for generating Facebook ad creatives in bulk. Includes multiple
 
 Detailed operational guides live in `runbooks/`:
 
-- **[Monthly Enrichment](runbooks/monthly-enrichment.md)** — End-to-end guide for monthly lead processing
-- **[ICP Scoring](runbooks/icp-scoring.md)** — Scoring model breakdown and tuning
-- **[Listings Scraper](runbooks/listings-scraper.md)** — Brokerage scraper setup and scheduling
-- **[Mass Email Pipeline](runbooks/mass_email_pipeline.md)** — CRM import, batch prep, LLM personalization, Instantly push
-- **[Orchestrator](runbooks/orchestrator.md)** — DAG operations and CRM sync
+- **[Runbooks Index](runbooks/README.md)** — Organized by subject area
+- **[Cold Outreach](runbooks/cold-outreach/mass_email_pipeline.md)** — CRM import, batch prep, LLM personalization, Instantly push
+- **[Lead Enrichment](runbooks/lead-enrichment/monthly-enrichment.md)** — End-to-end guide for monthly lead processing
+- **[Infrastructure](runbooks/infrastructure/orchestrator.md)** — DAG operations and CRM sync
 
 ## License
 
