@@ -1,5 +1,5 @@
 import React from 'react';
-import type { AdFormat, AdCopy } from '@/types/ad';
+import type { AdFormat, AdCopy, ImageLayoutSide } from '@/types/ad';
 import { COLORS } from '@/lib/constants';
 import { AdLogo } from './AdLogo';
 
@@ -8,6 +8,7 @@ interface StatsTemplateProps {
   format: AdFormat;
   backgroundImage?: string;
   overlayOpacity?: number;
+  layoutSide?: ImageLayoutSide;
 }
 
 const STATS = [
