@@ -926,4 +926,4 @@ The Monday 6 AM pipeline handles everything: pool selection, enrichment, CRM imp
 
 ---
 
-*This document supersedes the implementation plan sections of `runbooks/mass_email_pipeline.md` for current status. The mass_email_pipeline.md runbook remains the authoritative architecture reference.*
+*This document supersedes the implementation plan sections of `runbooks/cold-outreach/mass_email_pipeline.md` for current status. The mass_email_pipeline.md runbook remains the authoritative architecture reference.*
