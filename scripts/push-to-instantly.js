@@ -242,6 +242,22 @@ function markManifestComplete(manifestPath) {
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
 }
 
+function restoreDeferredLeadsToScored(rows, log) {
+  const restorable = rows
+    .filter((row) => row.twentyId)
+    .map((row) => ({
+      id: row.twentyId,
+      funnel_stage: 'scored',
+    }));
+
+  if (restorable.length === 0) return 0;
+
+  log.info('Restoring unresolved leads to scored', { count: restorable.length });
+  updateLeads(restorable);
+  log.info('Unresolved leads restored to scored', { count: restorable.length });
+  return restorable.length;
+}
+
 // ---------------------------------------------------------------------------
 // Main (exported for programmatic use)
 // ---------------------------------------------------------------------------
@@ -294,6 +310,7 @@ export async function main(opts = {}) {
   // Group leads by resolved campaign
   const leadsByCampaign = new Map(); // campaignId -> { label, leads[] }
   const unresolved = [];
+  const unresolvedRows = [];
 
   for (const row of rows) {
     const { label, campaignId } = resolveCampaignId(row, campaignNameMap, batchTestName);
@@ -302,6 +319,7 @@ export async function main(opts = {}) {
 
     if (!campaignId) {
       unresolved.push({ email: row.email, tier: row.icp_tier, variant: row.abVariant, expectedName: label });
+      unresolvedRows.push(row);
     } else {
       if (!leadsByCampaign.has(campaignId)) {
         leadsByCampaign.set(campaignId, { label, leads: [] });
@@ -325,9 +343,6 @@ export async function main(opts = {}) {
     }
     log.warn('Unresolved campaign leads', { count: unresolved.length, missingCampaigns: missing });
 
-    if (unresolved.length === rows.length) {
-      throw new Error(`No leads matched any Instantly campaign. Expected names like: ${missing.slice(0, 3).join(', ')}`);
-    }
   }
 
   // Inbox routing
@@ -365,8 +380,38 @@ export async function main(opts = {}) {
     for (const [cid, { label, leads }] of leadsByCampaign) {
       console.log(`  Would push ${leads.length} leads to "${label}" (${cid.slice(0, 8)}...)`);
     }
+    if (unresolved.length > 0) {
+      console.log(`  Would defer ${unresolved.length} unresolved leads until matching Instantly campaigns exist`);
+    }
     console.log(`  Would update ${routableRows.length} leads in SQLite`);
-    return { metrics: { pushed: 0, errors: 0, crm_updated: 0, unresolved: unresolved.length } };
+    return {
+      metrics: {
+        pushed: 0,
+        errors: 0,
+        crm_updated: 0,
+        unresolved: unresolved.length,
+        restored_to_scored: 0,
+      },
+    };
+  }
+
+  if (routableRows.length === 0 && unresolvedRows.length > 0) {
+    const restored = restoreDeferredLeadsToScored(unresolvedRows, log);
+    console.log('\n═══════════════════════════════════════════════════════════');
+    console.log('  PUSH DEFERRED');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log(`  No Instantly campaigns matched this batch.`);
+    console.log(`  Deferred unresolved leads: ${unresolved.length}`);
+    console.log(`  Restored to scored: ${restored}`);
+    return {
+      metrics: {
+        pushed: 0,
+        errors: 0,
+        crm_updated: 0,
+        unresolved: unresolved.length,
+        restored_to_scored: restored,
+      },
+    };
   }
 
   // Push to Instantly via v1 /lead/add (bulk, chunks of 100)
@@ -458,8 +503,16 @@ export async function main(opts = {}) {
   }
 
   console.log(`\n  Total pushed: ${totalPushed}, Errors: ${totalErrors}`);
+  let restoredToScored = 0;
+  if (unresolvedRows.length > 0) {
+    restoredToScored = restoreDeferredLeadsToScored(unresolvedRows, log);
+  }
+
   if (unresolved.length > 0) {
     console.log(`  Unresolved (skipped): ${unresolved.length}`);
+    if (restoredToScored > 0) {
+      console.log(`  Restored to scored: ${restoredToScored}`);
+    }
   }
 
   console.log(`\n  SQLite updates:`);
@@ -495,7 +548,13 @@ export async function main(opts = {}) {
     console.log('  └─────────────────────────┴───────┘');
   }
 
-  const metrics = { pushed: totalPushed, errors: totalErrors, crm_updated: crmUpdated, unresolved: unresolved.length };
+  const metrics = {
+    pushed: totalPushed,
+    errors: totalErrors,
+    crm_updated: crmUpdated,
+    unresolved: unresolved.length,
+    restored_to_scored: restoredToScored,
+  };
   log.info('Push complete', metrics);
 
   return { metrics };
