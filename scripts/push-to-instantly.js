@@ -20,6 +20,7 @@ import crypto from 'crypto';
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { parse } from 'csv-parse/sync';
+import { stringify } from 'csv-stringify/sync';
 import {
   getEnv,
   withRetry,
@@ -41,6 +42,32 @@ function getArg(flag) {
 }
 function hasFlag(flag) {
   return args.includes(flag);
+}
+
+function buildGreetingLine(firstName) {
+  const trimmed = (firstName || '').trim();
+  return trimmed ? `${trimmed},` : '';
+}
+
+function validatePushRows(rows) {
+  const validRows = [];
+  const suppressedRows = [];
+
+  for (const row of rows) {
+    const firstName = (row.first_name || '').trim();
+    if (!firstName) {
+      suppressedRows.push({
+        email: row.email || '',
+        company_name: row.company_name || '',
+        last_name: row.last_name || '',
+        reason: 'blank_first_name',
+      });
+      continue;
+    }
+    validRows.push(row);
+  }
+
+  return { validRows, suppressedRows };
 }
 
 // ---------------------------------------------------------------------------
@@ -136,11 +163,30 @@ function resolveCampaignId(row, campaignNameMap, testName) {
 async function pushLeadsToCampaign(campaignId, leads, log) {
   // v1 /lead/add supports bulk (up to ~100 per call)
   const CHUNK_SIZE = 100;
-  const results = { pushed: 0, skipped: 0, errors: 0, errorDetails: [] };
+  const results = { pushed: 0, skipped: 0, errors: 0, suppressed: 0, errorDetails: [] };
 
   for (let i = 0; i < leads.length; i += CHUNK_SIZE) {
     const chunk = leads.slice(i, i + CHUNK_SIZE);
-    const v1Leads = chunk.map(lead => ({
+    const validChunk = [];
+
+    for (const lead of chunk) {
+      const firstName = (lead.first_name || '').trim();
+      if (!firstName) {
+        results.suppressed += 1;
+        log.warn('Suppressing Instantly lead with blank first_name', {
+          email: lead.email,
+          company: lead.company_name || '',
+        });
+        continue;
+      }
+      validChunk.push(lead);
+    }
+
+    if (validChunk.length === 0) {
+      continue;
+    }
+
+    const v1Leads = validChunk.map(lead => ({
       email: lead.email,
       first_name: lead.first_name || '',
       last_name: lead.last_name || '',
@@ -157,6 +203,7 @@ async function pushLeadsToCampaign(campaignId, leads, log) {
         region: lead.region || '',
         personalized_subject: lead.personalized_subject || '',
         personalized_hook: lead.personalized_hook || lead.hook_text || '',
+        greeting_line: buildGreetingLine(lead.first_name),
       },
     }));
 
@@ -172,7 +219,7 @@ async function pushLeadsToCampaign(campaignId, leads, log) {
       log.info(`Chunk ${Math.floor(i / CHUNK_SIZE) + 1}: ${uploaded} uploaded, ${alreadyIn} already in campaign, ${result.in_blocklist || 0} blocklisted`);
     } catch (err) {
       log.error(`Chunk ${Math.floor(i / CHUNK_SIZE) + 1} FAILED`, { campaignId, error: err.message });
-      results.errors += chunk.length;
+      results.errors += validChunk.length;
       if (results.errorDetails.length < 10) {
         results.errorDetails.push(`chunk ${Math.floor(i / CHUNK_SIZE) + 1}: ${err.message}`);
       }
@@ -275,7 +322,8 @@ export async function main(opts = {}) {
   // Parse CSV
   const fullPath = resolve(csvPath);
   const csvContent = readFileSync(fullPath, 'utf-8');
-  const rows = parse(csvContent, { columns: true, skip_empty_lines: true, trim: true });
+  const parsedRows = parse(csvContent, { columns: true, skip_empty_lines: true, trim: true });
+  const { validRows: rows, suppressedRows } = validatePushRows(parsedRows);
 
   // Detect mode from CSV content
   const isNurture = rows.some((r) => r.mode === 'nurture' || r.abVariant === 'C');
@@ -293,7 +341,14 @@ export async function main(opts = {}) {
   console.log('═══════════════════════════════════════════════════════════');
 
   console.log(`\nReading: ${fullPath}`);
-  log.info('Batch loaded for push', { count: rows.length, mode: pushMode });
+  log.info('Batch loaded for push', { count: rows.length, suppressed: suppressedRows.length, mode: pushMode });
+
+  if (suppressedRows.length > 0) {
+    const suppressedPath = join(dirname(fullPath), 'invalid-personalization.csv');
+    writeFileSync(suppressedPath, stringify(suppressedRows, { header: true }));
+    console.log(`\n  Suppressed ${suppressedRows.length} lead(s) with blank first_name`);
+    console.log(`  Wrote: ${suppressedPath}`);
+  }
 
   // Check Instantly API keys (v2 for campaigns, v1 org auth for lead push)
   if (!getEnv('INSTANTLY_API_KEY')) {
@@ -388,6 +443,7 @@ export async function main(opts = {}) {
       metrics: {
         pushed: 0,
         errors: 0,
+        suppressed: suppressedRows.length,
         crm_updated: 0,
         unresolved: unresolved.length,
         restored_to_scored: 0,
@@ -407,6 +463,7 @@ export async function main(opts = {}) {
       metrics: {
         pushed: 0,
         errors: 0,
+        suppressed: suppressedRows.length,
         crm_updated: 0,
         unresolved: unresolved.length,
         restored_to_scored: restored,
@@ -503,6 +560,9 @@ export async function main(opts = {}) {
   }
 
   console.log(`\n  Total pushed: ${totalPushed}, Errors: ${totalErrors}`);
+  if (suppressedRows.length > 0) {
+    console.log(`  Suppressed before push: ${suppressedRows.length}`);
+  }
   let restoredToScored = 0;
   if (unresolvedRows.length > 0) {
     restoredToScored = restoreDeferredLeadsToScored(unresolvedRows, log);
@@ -551,6 +611,7 @@ export async function main(opts = {}) {
   const metrics = {
     pushed: totalPushed,
     errors: totalErrors,
+    suppressed: suppressedRows.length,
     crm_updated: crmUpdated,
     unresolved: unresolved.length,
     restored_to_scored: restoredToScored,

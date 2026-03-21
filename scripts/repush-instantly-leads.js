@@ -23,6 +23,11 @@ function getArg(flag) {
 }
 function hasFlag(flag) { return args.includes(flag); }
 
+function buildGreetingLine(firstName) {
+  const trimmed = (firstName || '').trim();
+  return trimmed ? `${trimmed},` : '';
+}
+
 const dryRun = hasFlag('--dry-run');
 const limitArg = getArg('--limit');
 const campaignFilter = getArg('--campaign');
@@ -122,11 +127,16 @@ async function main() {
   for (const person of contacted) {
     const email = person.emails?.primaryEmail || '';
     if (!email) continue;
+    const firstName = (person.name?.firstName || '').trim();
 
     const tier = (person.icpTier || '').toLowerCase();
     const variant = (person.abVariant || '').toUpperCase();
     if (!tier || !variant) {
       unrouted.push({ email, reason: `missing tier=${tier} or variant=${variant}` });
+      continue;
+    }
+    if (!firstName) {
+      unrouted.push({ email, reason: 'blank first_name' });
       continue;
     }
 
@@ -151,7 +161,7 @@ async function main() {
 
     byCampaign.get(campaignId).leads.push({
       email,
-      first_name: person.name?.firstName || '',
+      first_name: firstName,
       last_name: person.name?.lastName || '',
       company_name: person.company?.name || '',
       custom_variables: {
@@ -166,6 +176,7 @@ async function main() {
         region: person.region || '',
         personalized_subject: person.personalizedSubject || '',
         personalized_hook: person.personalizedHook || person.hookText || '',
+        greeting_line: buildGreetingLine(firstName),
       },
     });
   }

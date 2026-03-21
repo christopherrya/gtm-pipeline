@@ -175,7 +175,7 @@ const SIGNATURE = `\n—\n{{sender_name}}\nDiscloser | Smarter property disclosu
 const BODIES_A = {
   hot: [
     // Email 1: The Hook — personalized with hookText
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 {{hookText}}
 
@@ -186,7 +186,7 @@ I built Discloser specifically for this. You upload the full packet — every do
 First property is free. Takes 2 minutes.${SIGNATURE}`,
 
     // Email 2: Value Add — chat with docs
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Different angle on Discloser — after uploading a disclosure packet, you can chat with the documents. Ask anything about the property and get answers with inline citations, right back to the source page.
 
@@ -195,7 +195,7 @@ Works well between showings. Compare what the seller disclosure says against the
 Try it on a current deal. First property is free.${SIGNATURE}`,
 
     // Email 3: Cost estimates
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 One thing that surprises agents about Discloser — the analysis includes repair cost estimates for every finding.
 
@@ -206,7 +206,7 @@ Walk into a negotiation knowing what things actually cost. Your clients notice w
 Upload takes 2 minutes. First property is free.${SIGNATURE}`,
 
     // Email 4: Breakup
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Last one from me. Next time you get a 200-page disclosure packet, run it through Discloser before the inspection.
 
@@ -215,7 +215,7 @@ First property is free — discloser.co${SIGNATURE}`,
 
   high: [
     // Email 1: The Hook — uses {{company}}
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Quick question — when you get a disclosure packet, do you upload it to ChatGPT? A lot of agents at {{company}} do. It works for a couple docs, but by the 3rd or 4th it starts losing context.
 
@@ -224,7 +224,7 @@ Discloser was built for this. Upload the full packet at once — every document.
 First property is free. Takes 2 minutes.${SIGNATURE}`,
 
     // Email 2: Value Add — chat with docs
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Different angle on Discloser — after uploading a disclosure packet, you can chat with the documents. Ask anything about the property and get answers with citations back to the source page.
 
@@ -233,7 +233,7 @@ Works well between showings. Compare what the seller disclosure says against the
 First property is free.${SIGNATURE}`,
 
     // Email 3: Cost estimates
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Discloser includes repair cost estimates for every finding in the analysis. Foundation issue on page 47? You'll see a cost range. Roof concern in the inspection? Same thing.
 
@@ -242,7 +242,7 @@ Walk into your next negotiation with actual numbers instead of guesses. Your cli
 Upload takes 2 minutes. First property is free.${SIGNATURE}`,
 
     // Email 4: Breakup
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Last note from me. When a disclosure packet hits your desk and you need answers fast, Discloser reads the full thing in two minutes.
 
@@ -251,7 +251,7 @@ First property is free — discloser.co${SIGNATURE}`,
 
   medium: [
     // Email 1: The Hook — universal
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 A lot of agents upload disclosure packets to ChatGPT. It works for a document or two, but by the 3rd or 4th it starts losing context and gives you generic summaries.
 
@@ -260,7 +260,7 @@ I built Discloser specifically for disclosure reviews. Upload the entire packet 
 First property is free. Takes 2 minutes.${SIGNATURE}`,
 
     // Email 2: Value Add — chat with docs
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 After uploading disclosures to Discloser, you can chat with the documents. Ask anything about the property and get answers with inline citations — right back to the source page.
 
@@ -269,7 +269,7 @@ Compare the seller disclosure against the inspection report. Pull up a specific 
 First property is free.${SIGNATURE}`,
 
     // Email 3: Cost estimates
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Discloser includes repair cost estimates for every finding. Foundation crack on page 47? You'll see a range. Roof issue? Same.
 
@@ -278,7 +278,7 @@ Walk into your next negotiation knowing what things cost. Clients notice when yo
 Upload takes 2 minutes. First property is free.${SIGNATURE}`,
 
     // Email 4: Breakup
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Last one from me. If a disclosure packet ever bogs down a deal, Discloser breaks it down in two minutes flat.
 
@@ -290,7 +290,7 @@ First property is free — discloser.co${SIGNATURE}`,
 const BODIES_B = {
   hot: [
     // Email 1: Hook — speed + cost estimates (personalized)
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 {{hookText}}
 
@@ -301,7 +301,7 @@ Foundation crack on page 182? You see a dollar range. Roof issue in the inspecti
 First property is free. Takes 2 minutes to upload.${SIGNATURE}`,
 
     // Email 2: Full packet upload
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Most tools make you upload disclosure documents one at a time. By the 3rd or 4th, you're managing separate conversations and losing track of which doc said what.
 
@@ -310,7 +310,7 @@ Discloser takes the entire packet at once — seller disclosure, inspection, pes
 Try it on a current deal. First property is free.${SIGNATURE}`,
 
     // Email 3: Chat with docs
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 One more thing about Discloser — after the analysis, you can chat with the documents. Ask anything about the property and get answers with inline citations, right back to the source page.
 
@@ -319,7 +319,7 @@ Compare what the seller disclosure says against the inspection report. Pull up a
 First property is free.${SIGNATURE}`,
 
     // Email 4: Breakup
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Last one from me. Next time a 200-page disclosure packet hits your desk, upload it to Discloser. Full breakdown in under 3 minutes, repair costs included.
 
@@ -328,7 +328,7 @@ First property is free — discloser.co${SIGNATURE}`,
 
   high: [
     // Email 1: Hook — speed + cost estimates (uses {{company}})
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Agents at {{company}} review a lot of disclosure packets. Most spend hours reading through them manually, or upload a few pages to ChatGPT and hope for the best.
 
@@ -337,7 +337,7 @@ Discloser reads the full packet in under 3 minutes. Every finding ranked by seve
 First property is free. Takes 2 minutes to upload.${SIGNATURE}`,
 
     // Email 2: Full packet upload
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Most tools make you upload disclosure documents one at a time. By the 3rd or 4th, you're managing separate conversations and context is gone.
 
@@ -346,7 +346,7 @@ Discloser takes the full packet at once — seller disclosure, inspection, pest 
 First property is free.${SIGNATURE}`,
 
     // Email 3: Chat with docs
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 After uploading disclosures to Discloser, you can chat with the documents. Ask anything about the property and get answers with citations back to the source page.
 
@@ -355,7 +355,7 @@ Works well between showings. Compare the seller disclosure against the inspectio
 First property is free.${SIGNATURE}`,
 
     // Email 4: Breakup
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Last note from me. Next disclosure packet that lands on your desk — upload it to Discloser. Full breakdown in 3 minutes, costs included.
 
@@ -364,7 +364,7 @@ First property is free — discloser.co${SIGNATURE}`,
 
   medium: [
     // Email 1: Hook — speed + cost estimates (universal)
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 The last disclosure packet I ran through Discloser was 247 pages. Full analysis came back in under 3 minutes — every finding ranked by severity, with estimated repair costs attached.
 
@@ -373,7 +373,7 @@ Foundation crack buried in the report? You see a dollar range. Roof issue? Same 
 First property is free. Takes 2 minutes to upload.${SIGNATURE}`,
 
     // Email 2: Full packet upload
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 One thing about Discloser — it takes the entire disclosure packet at once. Seller disclosure, inspection report, pest report, all of it. No splitting documents into separate uploads.
 
@@ -382,7 +382,7 @@ It cross-references findings across every document automatically, so nothing fal
 First property is free.${SIGNATURE}`,
 
     // Email 3: Chat with docs
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 After uploading disclosures to Discloser, you can chat with the documents. Ask anything about the property and get answers with inline citations — right back to the source page.
 
@@ -391,7 +391,7 @@ Compare the seller disclosure against the inspection report between showings. Pu
 First property is free.${SIGNATURE}`,
 
     // Email 4: Breakup
-    `Hi {{firstName}},
+    `{{greetingLine}}
 
 Last one from me. Next time a disclosure packet slows down a deal, run it through Discloser. Full breakdown in 3 minutes, repair costs included.
 
@@ -441,7 +441,7 @@ function nurtureSequence() {
         delay: 0,
         variants: [{
           subject: "{{firstName}}, here's what I sent a buyer before their showing",
-          body: toHtml(`Hi {{firstName}},
+          body: toHtml(`{{greetingLine}}
 
 Last time I mentioned Discloser for reviewing disclosure packets. Here's a different use — send the analysis to your buyer clients before the showing.
 
@@ -455,7 +455,7 @@ Upload takes 2 minutes. First property is still free.${SIGNATURE}`),
         delay: 6,
         variants: [{
           subject: '{{firstName}}, broke down a 200-page packet in 2 minutes',
-          body: toHtml(`Hi {{firstName}},
+          body: toHtml(`{{greetingLine}}
 
 Either way — next time you're staring at a thick disclosure packet, give Discloser a shot. Two minutes, full breakdown, first property free.
 
@@ -475,7 +475,7 @@ function softFollowupSequence() {
         delay: 0,
         variants: [{
           subject: '{{firstName}}, your free disclosure analysis is still here',
-          body: toHtml(`Hi {{firstName}},
+          body: toHtml(`{{greetingLine}}
 
 We connected a few weeks back about disclosure reviews. Wanted to check if the timing is better now.
 
