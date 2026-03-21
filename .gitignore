@@ -37,3 +37,6 @@ hub/
 .agent/
 .cursor/
 skills/
+
+# Local git worktrees
+.worktrees/
